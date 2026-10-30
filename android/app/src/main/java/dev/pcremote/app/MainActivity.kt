@@ -61,14 +61,25 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun PCRemoteApp(state: UiState, vm: MainViewModel, updates: UpdateViewModel, scan: ((String) -> Unit, (String) -> Unit) -> Unit) {
-    var showUpdates by remember { mutableStateOf(false) }
-    Scaffold(topBar = { Surface { Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text("PC Remote", Modifier.weight(1f), fontWeight = FontWeight.SemiBold); TextButton(onClick = { showUpdates = !showUpdates }) { Text(if (showUpdates) "Назад" else "Обновления") } } } }, bottomBar = { if (!showUpdates && state.credentials != null) NavigationBar { NavItem(Page.HOME, state.page, Icons.Outlined.Home, "Главная", vm::select); NavItem(Page.APPS, state.page, Icons.Outlined.Apps, "Приложения", vm::select); NavItem(Page.COMPUTERS, state.page, Icons.Outlined.Computer, "Компьютеры", vm::select) } }) { padding ->
+    Scaffold(bottomBar = {
+        NavigationBar {
+            if (state.credentials != null) {
+                NavItem(Page.HOME, state.page, Icons.Outlined.Home, "Главная", vm::select)
+                NavItem(Page.APPS, state.page, Icons.Outlined.Apps, "Приложения", vm::select)
+                NavItem(Page.COMPUTERS, state.page, Icons.Outlined.Computer, "Компьютеры", vm::select)
+            } else {
+                NavItem(Page.CONNECT, state.page, Icons.Outlined.QrCodeScanner, "Подключение", vm::select)
+            }
+            NavItem(Page.SETTINGS, state.page, Icons.Outlined.Settings, "Настройки", vm::select)
+        }
+    }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
-            if (showUpdates) UpdateScreen(updates) else when (state.page) {
+            when (state.page) {
                 Page.CONNECT -> ConnectScreen(state, { scan(vm::acceptQr, vm::reportError) })
                 Page.HOME -> HomeScreen(state, vm)
                 Page.APPS -> AppsScreen(state, vm)
                 Page.COMPUTERS -> ComputersScreen(state, vm) { scan(vm::acceptQr, vm::reportError) }
+                Page.SETTINGS -> SettingsScreen(updates)
             }
             if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
             state.error?.let { MessageBanner(it, true, vm::dismissError, Modifier.align(Alignment.BottomCenter)) }
@@ -77,13 +88,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun UpdateScreen(vm: UpdateViewModel) {
+@Composable private fun SettingsScreen(vm: UpdateViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(vertical = 24.dp)) {
-        item { Text("Обновления", style = MaterialTheme.typography.headlineMedium); Text("Установлена версия ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { Button(onClick = vm::check, enabled = !state.busy) { Text("Проверить обновления") } }
-        if (state.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (state.message.isNotBlank()) item { Text(state.message) }
+        item { Text("Настройки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold) }
+        item {
+            Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Обновления приложения", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text("PC Remote ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = vm::check, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("Проверить обновления") }
+                    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (state.message.isNotBlank()) Text(state.message)
+                }
+            }
+        }
         state.release?.let { release ->
             item { Text(release.notes.ifBlank { "Новая версия PC Remote" }) }
             item { Button(onClick = if (state.apk == null) vm::download else vm::install, enabled = !state.busy) { Text(if (state.apk == null) "Скачать обновление" else "Установить") } }

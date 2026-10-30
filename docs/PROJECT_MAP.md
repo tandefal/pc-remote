@@ -55,8 +55,8 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 
 ## Android
 
-- `MainActivity.kt` — Material 3 UI: подключение, главная, приложения и выбор компьютера; закрываемые сообщения об ошибках и результате, подтверждения блокировки, перезагрузки, выключения, выхода и принудительного завершения приложений; встроенный ZXing QR scanner.
-- `UpdateViewModel.kt` — отдельное состояние экрана обновлений, GitHub Releases, проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
+- `MainActivity.kt` — Material 3 UI: подключение, главная, приложения, выбор компьютера и настройки в нижней навигации; закрываемые сообщения об ошибках и результате, подтверждения блокировки, перезагрузки, выключения, выхода и принудительного завершения приложений; встроенный ZXing QR scanner.
+- `UpdateViewModel.kt` — отдельное состояние обновлений в разделе «Настройки» (доступен до сопряжения), GitHub Releases, проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
 - `MainViewModel.kt` — StateFlow, активный health-check выбранного компьютера раз в 5 секунд, многокомпьютерное сопряжение/переключение и событийное обновление приложений.
 - `data/DiscoveryManager.kt` — Android NSD `_pcremote._tcp`, активный MulticastLock для Android 10–12, обновление IP только после совпадения computer id; mDNS не считается доказательством идентичности.
 - `data/ApiClient.kt` — HTTPS с SHA-256 certificate pin, таймауты, bearer token и request id.
