@@ -24,6 +24,7 @@ public partial class MainWindow : Window
         ComputerNameText.Text = settings.ComputerName;
         ComputerNameBox.Text = settings.ComputerName;
         AutoStartCheck.IsChecked = AutoStartService.IsEnabled();
+        VersionText.Text = "PC Remote " + UpdateService.CurrentVersion;
         RefreshDevices();
         server.StateChanged += (_, state) => Dispatcher.Invoke(() =>
         {
@@ -36,6 +37,27 @@ public partial class MainWindow : Window
     {
         ServerStatusText.Text = "Ошибка";
         ServerStatusText.ToolTip = message;
+    }
+
+    private async void CheckUpdates(object sender, RoutedEventArgs e)
+    {
+        UpdateButton.IsEnabled = false;
+        UpdateStatus.Text = "Проверка обновлений…";
+        try
+        {
+            var update = await UpdateService.CheckAsync();
+            if (update is null) { UpdateStatus.Text = "Установлена последняя опубликованная версия."; return; }
+            UpdateStatus.Text = "Доступна версия " + update.Version;
+            if (System.Windows.MessageBox.Show($"Доступна версия {update.Version}.\n\n{update.Notes}\n\nСкачать обновление и запустить установщик? PC Remote будет закрыт.", "Обновление PC Remote", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
+            UpdateStatus.Text = "Скачивание и проверка обновления…";
+            var path = await UpdateService.DownloadAsync(update);
+            var start = new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true };
+            start.ArgumentList.Add("/DIR=" + AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar));
+            System.Diagnostics.Process.Start(start);
+            await ((App)System.Windows.Application.Current).ExitAsync();
+        }
+        catch { UpdateStatus.Text = "Не удалось обновить приложение. Проверьте интернет и повторите попытку. Релиз должен содержать установщик с SHA-256."; }
+        finally { UpdateButton.IsEnabled = true; }
     }
 
     public void ExitApplication() { _allowClose = true; Close(); }

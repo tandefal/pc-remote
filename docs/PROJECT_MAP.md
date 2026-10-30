@@ -16,6 +16,8 @@ Android UI → ViewModel → NSD / HTTPS API → WPF-процесс → пров
 AGENTS.md                                  постоянные правила Codex
 README.md                                  сборка, установка и использование
 docs/PROJECT_MAP.md                        эта карта
+packaging/Build-Release.ps1                сборка релиза, постоянная Android-подпись, SHA-256
+packaging/windows/PCRemote.iss             установщик Windows с выбором папки
 windows/PCRemote.Windows/
   PCRemote.Windows.csproj                  WPF WinExe + ASP.NET Core
   App.xaml(.cs)                            запуск, mutex, IPC, жизненный цикл
@@ -43,6 +45,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 - `Services/TrayService.cs` — значок, двойной клик, «Открыть» и «Выход».
 - `Services/AutoStartService.cs` — HKCU Run без повышения прав; по умолчанию выключен, включается пользователем.
 - `Services/ThemeService.cs` — системная тема Windows.
+- `Services/UpdateService.cs` — ручная проверка последнего стабильного GitHub Release, скачивание установщика с проверкой размера/SHA-256; окно запускает установщик и корректно завершает приложение.
 - `Services/ServerHost.cs` — Kestrel HTTPS, Minimal API, локальная адресная проверка, bearer-фильтр, DNS-SD только с адресами частных IPv4-адаптеров Ethernet/Wi-Fi с локальным шлюзом.
 - `Services/CertificateService.cs` — локальный RSA-сертификат и SHA-256 fingerprint.
 - `Services/PairingService.cs` — трёхминутный одноразовый секрет, лимит попыток, уникальный device token.
@@ -53,6 +56,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 ## Android
 
 - `MainActivity.kt` — Material 3 UI: подключение, главная, приложения и выбор компьютера; закрываемые сообщения об ошибках и результате, подтверждения блокировки, перезагрузки, выключения, выхода и принудительного завершения приложений; встроенный ZXing QR scanner.
+- `UpdateViewModel.kt` — отдельное состояние экрана обновлений, GitHub Releases, проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
 - `MainViewModel.kt` — StateFlow, активный health-check выбранного компьютера раз в 5 секунд, многокомпьютерное сопряжение/переключение и событийное обновление приложений.
 - `data/DiscoveryManager.kt` — Android NSD `_pcremote._tcp`, активный MulticastLock для Android 10–12, обновление IP только после совпадения computer id; mDNS не считается доказательством идентичности.
 - `data/ApiClient.kt` — HTTPS с SHA-256 certificate pin, таймауты, bearer token и request id.
@@ -87,6 +91,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 | HTTP API | `windows/PCRemote.Windows/Services/ServerHost.cs`, `windows/PCRemote.Windows/Models/Contracts.cs`, Android `data/ApiClient.kt` |
 | Обнаружение ПК | `windows/PCRemote.Windows/Services/ServerHost.cs`, Android `data/DiscoveryManager.kt` |
 | Сборка и проверки | `windows/PCRemote.Windows/PCRemote.Windows.csproj`, `android/build.gradle.kts`, `android/app/build.gradle.kts`, `tests/PCRemote.Checks/Program.cs`, `tests/Test-Android.ps1` |
+| Установка и обновления | `packaging/Build-Release.ps1`, `packaging/windows/PCRemote.iss`, Windows `Services/UpdateService.cs`, Android `UpdateViewModel.kt`, `AndroidManifest.xml`, `res/xml/update_paths.xml` |
 
 Android `data/` в таблице находится в `android/app/src/main/java/dev/pcremote/app/data/`.
 
@@ -104,4 +109,5 @@ Android `data/` в таблице находится в `android/app/src/main/ja
 | Список, иконки и завершение приложений | Реализовано | API списка, группировка, выход и завершение тестовых окон; скрытое окно без значка исключено, живой значок добавлен, устаревшая запись исключена; массовое закрытие вручную |
 | Android Compose UI и хранение | Реализовано | debug APK/lint; предыдущая одиночная привязка мигрирует; список компьютеров требует ручной проверки |
 | Android сеть и восстановление | Реализовано | HTTPS Android→Windows проверен; восстановление сети вручную |
+| Установщик и обновления через GitHub Releases | Реализовано | Windows self-contained и подписанный Android release APK собраны, lintRelease пройден; мастер осмотрен до установки, тестовая установка/удаление выполнены; обновление на следующую версию требует проверки при следующем релизе |
 | Сквозные сценарии MVP | В работе | доступные безопасные тесты пройдены, реальные сеть/камера/команды проверяет пользователь |

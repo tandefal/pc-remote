@@ -74,7 +74,7 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private async Task ExitAsync()
+    public async Task ExitAsync()
     {
         _lifetime?.Cancel();
         if (_server is not null) await _server.DisposeAsync();

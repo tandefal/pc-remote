@@ -7,7 +7,16 @@ plugins {
 android {
     namespace = "dev.pcremote.app"
     compileSdk = 36
-    defaultConfig { applicationId = "dev.pcremote.app"; minSdk = 29; targetSdk = 36; versionCode = 1; versionName = "1.0.0"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "dev.pcremote.app"; minSdk = 29; targetSdk = 36; versionCode = providers.gradleProperty("releaseVersionCode").orElse("1").get().toInt(); versionName = providers.gradleProperty("releaseVersion").orElse("1.0.0").get(); testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    signingConfigs {
+        create("release") {
+            System.getenv("PCREMOTE_KEYSTORE")?.let { storeFile = file(it) }
+            storePassword = System.getenv("PCREMOTE_STORE_PASSWORD")
+            keyAlias = "pcremote"
+            keyPassword = System.getenv("PCREMOTE_KEY_PASSWORD")
+        }
+    }
+    buildTypes { getByName("release") { signingConfig = signingConfigs.getByName("release") } }
     buildFeatures { compose = true; buildConfig = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
