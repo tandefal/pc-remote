@@ -1,0 +1,16 @@
+# Build output
+artifacts/
+**/bin/
+**/obj/
+**/build/
+.gradle/
+.gradle-user/
+android/local.properties
+
+# IDE and local data
+.idea/
+*.user
+*.suo
+*.keystore
+*.jks
+local.properties

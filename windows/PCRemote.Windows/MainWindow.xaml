@@ -1,0 +1,42 @@
+<Window x:Class="PCRemote.Windows.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PC Remote" Width="920" Height="610" MinWidth="720" MinHeight="500" Background="{DynamicResource PageBrush}" Foreground="{DynamicResource TextBrush}" Closing="OnClosing">
+  <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Background="{DynamicResource NavBrush}" Padding="20">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top">
+          <StackPanel Orientation="Horizontal" Margin="8,8,8,28"><TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center"/><TextBlock Text="PC Remote" FontSize="25" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/></StackPanel>
+          <Button x:Name="HomeButton" HorizontalContentAlignment="Left" Click="ShowHome"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE80F;" FontFamily="Segoe MDL2 Assets" FontSize="17" Width="28"/><TextBlock Text="Главная"/></StackPanel></Button>
+          <Button HorizontalContentAlignment="Left" Click="ShowDevices"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets" FontSize="17" Width="28"/><TextBlock Text="Устройства"/></StackPanel></Button>
+          <Button HorizontalContentAlignment="Left" Click="ShowSettings"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="17" Width="28"/><TextBlock Text="Настройки"/></StackPanel></Button>
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Bottom" Text="Локально и безопасно" Foreground="{DynamicResource SecondaryTextBrush}" Margin="8"/>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Column="1" Margin="34">
+      <Grid x:Name="HomePanel">
+        <StackPanel>
+          <TextBlock Text="Главная" FontSize="32" FontWeight="SemiBold"/>
+          <TextBlock Text="Управление компьютером в локальной сети" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,4,0,24"/>
+          <UniformGrid Columns="2">
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="14" Padding="22" Margin="0,0,10,10"><StackPanel><TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="{DynamicResource AccentBrush}"/><TextBlock Text="Имя компьютера" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,12,0,0"/><TextBlock x:Name="ComputerNameText" FontSize="22" FontWeight="SemiBold" Margin="0,6,0,0"/></StackPanel></Border>
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="14" Padding="22" Margin="10,0,0,10"><StackPanel><TextBlock Text="&#xE968;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="{DynamicResource AccentBrush}"/><TextBlock Text="Локальный сервер" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,12,0,0"/><TextBlock x:Name="ServerStatusText" Text="Запуск…" FontSize="22" FontWeight="SemiBold" Margin="0,6,0,0"/></StackPanel></Border>
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="14" Padding="22" Margin="0,10,10,0"><StackPanel><TextBlock Text="&#xE774;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="{DynamicResource AccentBrush}"/><TextBlock Text="Обнаружение в сети" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,12,0,0"/><TextBlock x:Name="DiscoveryStatusText" Text="Запуск…" FontSize="22" FontWeight="SemiBold" Margin="0,6,0,0"/></StackPanel></Border>
+            <Border Background="{DynamicResource CardBrush}" CornerRadius="14" Padding="22" Margin="10,10,0,0"><StackPanel><TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="{DynamicResource AccentBrush}"/><TextBlock Text="Привязанные устройства" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,12,0,0"/><TextBlock x:Name="DeviceCountText" FontSize="22" FontWeight="SemiBold" Margin="0,6,0,0"/></StackPanel></Border>
+          </UniformGrid>
+        </StackPanel>
+      </Grid>
+      <Grid x:Name="DevicesPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <DockPanel><StackPanel><TextBlock Text="Устройства" FontSize="32" FontWeight="SemiBold"/><TextBlock Text="Телефоны с доступом к компьютеру" Foreground="{DynamicResource SecondaryTextBrush}"/></StackPanel><Button DockPanel.Dock="Right" Click="CreatePairing"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/><TextBlock Text="Добавить телефон"/></StackPanel></Button></DockPanel>
+        <Grid Grid.Row="1" Margin="0,24,0,0"><ListBox x:Name="DevicesList" BorderThickness="0" Background="Transparent"><ListBox.ItemTemplate><DataTemplate><Border Background="{DynamicResource CardBrush}" CornerRadius="12" Padding="16" Margin="0,0,0,10"><DockPanel><Button DockPanel.Dock="Right" Tag="{Binding Id}" Click="RevokeDevice"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" Margin="0,0,8,0"/><TextBlock Text="Отвязать"/></StackPanel></Button><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="{DynamicResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,14,0"/><StackPanel><TextBlock Text="{Binding Name}" FontSize="17" FontWeight="SemiBold"/><TextBlock Text="{Binding LastSeenDisplay}" Foreground="{DynamicResource SecondaryTextBrush}"/></StackPanel></StackPanel></DockPanel></Border></DataTemplate></ListBox.ItemTemplate></ListBox>
+          <Border x:Name="PairingCard" Visibility="Collapsed" Background="{DynamicResource CardBrush}" CornerRadius="14" Padding="22" HorizontalAlignment="Center" VerticalAlignment="Center"><StackPanel Width="300"><TextBlock Text="Сканируйте QR-код" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"/><Image x:Name="QrImage" Width="250" Height="250" Margin="0,16"/><TextBlock x:Name="PairingExpiryText" TextAlignment="Center" Foreground="{DynamicResource SecondaryTextBrush}"/><Button Content="Закрыть" Click="ClosePairing"/></StackPanel></Border></Grid>
+      </Grid>
+      <Grid x:Name="SettingsPanel" Visibility="Collapsed">
+        <StackPanel><TextBlock Text="Настройки" FontSize="32" FontWeight="SemiBold"/><TextBlock Text="Поведение PC Remote" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,4,0,24"/>
+          <Border Background="{DynamicResource CardBrush}" CornerRadius="14" Padding="22"><StackPanel><CheckBox x:Name="AutoStartCheck" Content="Запускать при входе в Windows" Foreground="{DynamicResource TextBrush}" Checked="AutoStartChanged" Unchecked="AutoStartChanged" Margin="4,8"/><TextBlock Text="Имя компьютера" Margin="4,18,4,0"/><DockPanel><Button DockPanel.Dock="Right" Content="Сохранить" Click="SaveName"/><TextBox x:Name="ComputerNameBox"/></DockPanel><Separator Margin="4,22"/><TextBlock Text="PC Remote 1.0.0" FontWeight="SemiBold"/><TextBlock Text="Управление работает только в локальной сети через защищённое соединение." Foreground="{DynamicResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/></StackPanel></Border>
+        </StackPanel>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>
