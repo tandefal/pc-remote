@@ -94,9 +94,9 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
         protectedApi.MapPost("/commands/lock", (Func<HttpContext, Task<IResult>>)(c => ExecuteCommand(c, CommandService.Lock)));
         protectedApi.MapPost("/commands/reboot", (Func<HttpContext, Task<IResult>>)(c => ExecuteCommand(c, CommandService.Reboot)));
         protectedApi.MapPost("/commands/shutdown", (Func<HttpContext, Task<IResult>>)(c => ExecuteCommand(c, CommandService.Shutdown)));
-        protectedApi.MapPost("/apps/{id}/exit", (string id, HttpContext c) => ExecuteCommand(c, () => commands.Exit(id)));
-        protectedApi.MapPost("/apps/{id}/terminate", (string id, HttpContext c) => ExecuteCommand(c, () => commands.Terminate(id)));
-        protectedApi.MapPost("/apps/terminate-all", (Func<HttpContext, Task<IResult>>)(c => ExecuteCommand(c, commands.TerminateAll)));
+        protectedApi.MapPost("/apps/{id}/exit", (string id, HttpContext c) => ExecuteCommand(c, () => apps.ExitAsync(id, c.RequestAborted)));
+        protectedApi.MapPost("/apps/{id}/terminate", (string id, HttpContext c) => ExecuteCommand(c, () => apps.TerminateAsync(id, c.RequestAborted)));
+        protectedApi.MapPost("/apps/terminate-all", (Func<HttpContext, Task<IResult>>)(c => ExecuteCommand(c, () => apps.TerminateAllAsync(c.RequestAborted))));
 
         await _app.StartAsync(lifetime);
         _saveLoop = SaveSeenAsync();
@@ -168,7 +168,9 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
         lock (settings) device = settings.Devices.FirstOrDefault(x => CryptographicOperations.FixedTimeEquals(Convert.FromHexString(x.TokenHash), Convert.FromHexString(hash)));
         return device is not null;
     }
-    private async Task<IResult> ExecuteCommand(HttpContext context, Func<CommandResult> action)
+    private Task<IResult> ExecuteCommand(HttpContext context, Func<CommandResult> action) => ExecuteCommand(context, () => Task.FromResult(action()));
+
+    private async Task<IResult> ExecuteCommand(HttpContext context, Func<Task<CommandResult>> action)
     {
         var requestId = context.Request.Headers["X-Request-Id"].FirstOrDefault();
         if (!Guid.TryParse(requestId, out var id)) return Results.Json(new ApiError("invalid_request_id", "Требуется UUID в X-Request-Id.", context.TraceIdentifier), statusCode: 400);
@@ -177,10 +179,10 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
         {
             lock (settings)
             {
-                if (!TryAuthorize(context, out _)) return new(false, "Доступ устройства отозван.");
-                return action();
+                if (!TryAuthorize(context, out _)) return Task.FromResult(new CommandResult(false, "Доступ устройства отозван."));
             }
-        });
+            return action();
+        }, context.RequestAborted);
         return ToResult(result);
     }
     private static IResult ToResult(CommandResult r) => r.Success ? Results.Ok(r) : Results.Json(r, statusCode: 409);

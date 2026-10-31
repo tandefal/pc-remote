@@ -123,7 +123,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!_state.value.online) return
         val c = _state.value.credentials ?: return
         viewModelScope.launch { runTask {
-            val message = api.command(c, path)
+            val message = try { api.command(c, path) } finally { if (path.startsWith("/api/v1/apps/") && _state.value.credentials == c) refreshApps() }
             if (_state.value.credentials == c) _state.value = _state.value.copy(notice = message)
         } }
     }

@@ -16,6 +16,7 @@ if (args.Contains("--test-window"))
     {
         var window = new System.Windows.Window { Title = "PC Remote safe test window", Width = 200, Height = 100, Left = -10000, Top = -10000, ShowInTaskbar = true };
         using var icon = new System.Windows.Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "PC Remote — тест трея" };
+        if (args.Contains("--minimize-on-close")) window.Closing += (_, e) => { e.Cancel = true; window.Hide(); };
         window.Loaded += (_, _) =>
         {
             if (args.Contains("--hidden")) window.Hide();
@@ -136,6 +137,14 @@ try
     Check(testApp.WindowCount == 0, "Live tray icon included without visible windows");
     Check(apps.Exit(testApp.Id).Success && tray.WaitForExit(5000), "Synthetic tray application exited");
     Check(!apps.GetApplications().Any(x => x.Name is "PCRemote.Checks" or "PCRemote.SafeWindow"), "Stale tray registry entry does not add an application");
+    var minimizing = Process.Start(new ProcessStartInfo(safeWindowExecutable, "--test-window --tray --minimize-on-close") { UseShellExecute = false })!;
+    children.Add(minimizing);
+    for (var attempt = 0; attempt < 50 && minimizing.MainWindowHandle == IntPtr.Zero; attempt++) { await Task.Delay(100); minimizing.Refresh(); }
+    testApp = apps.GetApplications().Single(x => x.Name is "PCRemote.Checks" or "PCRemote.SafeWindow");
+    Check(!(await apps.ExitAsync(testApp.Id)).Success && !minimizing.HasExited, "Minimize to tray is not successful exit");
+    testApp = apps.GetApplications().Single(x => x.Name is "PCRemote.Checks" or "PCRemote.SafeWindow");
+    Check((await apps.TerminateAsync(testApp.Id)).Success && minimizing.WaitForExit(5000), "Tray process force termination verified");
+
 }
 finally
 {

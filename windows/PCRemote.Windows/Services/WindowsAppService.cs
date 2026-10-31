@@ -57,7 +57,7 @@ public sealed class WindowsAppService
         var result = new List<AppInfo>();
         foreach (var group in candidates.GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
         {
-            var targets = FindProcessesByExactPath(group.Key);
+            var targets = FindRelatedProcesses(group.Key);
             var targetByPid = targets.ToDictionary(x => x.Pid);
             var ownedWindows = windows
                 .Where(x => targetByPid.ContainsKey(x.Pid))
@@ -82,38 +82,60 @@ public sealed class WindowsAppService
         return result.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
-    public CommandResult Terminate(string id)
+    public CommandResult Terminate(string id) => TerminateAsync(id).GetAwaiter().GetResult();
+
+    public async Task<CommandResult> TerminateAsync(string id, CancellationToken cancellationToken = default)
     {
         Snapshot? snapshot; lock (_sync) _snapshot.TryGetValue(id, out snapshot);
         if (snapshot is null || !IsCurrent(snapshot)) return new(false, "Список приложений устарел. Обновите его.");
-        return TerminateTargets(snapshot.Processes);
+        return await TerminateTargets(snapshot.Processes, cancellationToken);
     }
 
-    public CommandResult Exit(string id)
+    public CommandResult Exit(string id) => ExitAsync(id).GetAwaiter().GetResult();
+
+    public async Task<CommandResult> ExitAsync(string id, CancellationToken cancellationToken = default)
     {
         Snapshot? snapshot; lock (_sync) _snapshot.TryGetValue(id, out snapshot);
         if (snapshot is null || !IsCurrent(snapshot)) return new(false, "Список приложений устарел. Обновите его.");
 
         var sent = 0;
+        var steam = snapshot.Processes.FirstOrDefault(x => IsSteam(x.Path));
+        if (steam is not null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrent(steam)) return new(false, "Цель Steam изменилась. Обновите список.");
+            try
+            {
+                var start = new ProcessStartInfo(steam.Path) { UseShellExecute = false };
+                start.ArgumentList.Add("-shutdown");
+                using var request = Process.Start(start);
+                sent = request is null ? 0 : 1;
+            }
+            catch { return new(false, "Не удалось отправить Steam запрос на выход."); }
+        }
+        else
         foreach (var window in snapshot.Windows.DistinctBy(x => x.Handle))
         {
-            if (!IsCurrent(window) || !IsWindow(window.Handle)) continue;
+            if (!IsCurrent(window) || !IsWindow(window.Handle) || GetWindowTextLength(window.Handle) == 0) continue;
             if (PostMessage(window.Handle, 0x0010, IntPtr.Zero, IntPtr.Zero)) sent++;
         }
         if (sent == 0) return new(false, "Приложение не поддерживает обычный выход. Используйте «Завершить принудительно».");
 
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline && snapshot.Processes.Any(IsCurrent)) Thread.Sleep(100);
-        return snapshot.Processes.Any(IsCurrent)
+        while (DateTimeOffset.UtcNow < deadline && snapshot.Processes.Any(IsRunning)) await Task.Delay(100, cancellationToken);
+        return snapshot.Processes.Any(IsRunning) || snapshot.Processes.Select(x => x.Path).Distinct().SelectMany(FindProcessesByExactPath).Any()
             ? new(false, "Запрос на выход отправлен, но приложение продолжает работать. Используйте «Завершить принудительно».")
             : new(true, "Приложение завершило работу.");
     }
 
-    public CommandResult TerminateAll()
+    public CommandResult TerminateAll() => TerminateAllAsync().GetAwaiter().GetResult();
+
+    public async Task<CommandResult> TerminateAllAsync(CancellationToken cancellationToken = default)
     {
         var currentIds = GetApplications().Select(x => x.Id).ToHashSet();
-        List<Target> targets; lock (_sync) targets = _snapshot.Where(x => currentIds.Contains(x.Key) && IsCurrent(x.Value)).SelectMany(x => x.Value.Processes).DistinctBy(x => (x.Pid, x.StartTime)).ToList();
-        return TerminateTargets(targets);
+        List<Snapshot> snapshots; lock (_sync) snapshots = _snapshot.Where(x => currentIds.Contains(x.Key)).Select(x => x.Value).ToList();
+        var targets = snapshots.SelectMany(x => x.Processes).DistinctBy(x => (x.Pid, x.StartTime)).ToList();
+        return await TerminateTargets(targets, cancellationToken);
     }
 
     private static (HashSet<uint> Ids, HashSet<string> Paths) GetTrayIcons()
@@ -156,24 +178,75 @@ public sealed class WindowsAppService
         return Shell_NotifyIconGetRect(ref icon, out _) == 0;
     }
 
-    private static CommandResult TerminateTargets(IEnumerable<Target> targets)
+    private static async Task<CommandResult> TerminateTargets(IEnumerable<Target> targets, CancellationToken cancellationToken)
     {
-        var errors = new List<string>(); var completed = 0;
-        foreach (var target in targets)
+        var tracked = targets.ToList();
+        var errors = new List<string>();
+        foreach (var target in tracked)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 using var process = Process.GetProcessById(target.Pid);
                 // Open and retain the handle before validating identity, so PID reuse cannot retarget Kill.
                 _ = process.SafeHandle;
                 if (!IsAllowedProcess(process) || process.StartTime != target.StartTime || !string.Equals(process.MainModule?.FileName, target.Path, StringComparison.OrdinalIgnoreCase) || !IsSafeExecutable(target.Path)) { errors.Add($"PID {target.Pid}: цель изменилась или недоступна"); continue; }
-                process.Kill(true);
-                if (process.WaitForExit(3000)) completed++; else errors.Add($"PID {target.Pid}: завершение не подтверждено");
+                process.Kill(false);
+
             }
-            catch (ArgumentException) { completed++; }
+            catch (ArgumentException) { }
             catch (Exception ex) { errors.Add($"PID {target.Pid}: {ex.Message}"); }
         }
-        return new(errors.Count == 0, errors.Count == 0 ? $"Завершено процессов: {completed}" : $"Завершено: {completed}, ошибок: {errors.Count}", errors);
+        var deadline = Stopwatch.StartNew();
+        while (deadline.Elapsed < TimeSpan.FromSeconds(3) && tracked.Any(IsRunning)) await Task.Delay(100, cancellationToken);
+        await Task.Delay(1000, cancellationToken);
+        var restarted = tracked.Select(x => x.Path).Distinct(StringComparer.OrdinalIgnoreCase).SelectMany(FindProcessesByExactPath).Any(x => !tracked.Contains(x));
+        if (restarted) return new(false, "Обнаружен новый экземпляр приложения. Обновите список.", errors);
+        if (tracked.Any(IsRunning)) return new(false, "Часть процессов продолжает работать.", errors);
+        return new(errors.Count == 0, errors.Count == 0 ? "Все проверенные процессы завершены." : $"Завершение неполное, ошибок: {errors.Count}", errors);
+    }
+
+    private static List<Target> FindRelatedProcesses(string path)
+    {
+        var targets = FindProcessesByExactPath(path);
+        if (!IsSteam(path)) return targets;
+        var helpers = new[] { "cef.win7", "cef.win7x64" }.SelectMany(folder =>
+            FindProcessesByExactPath(Path.Combine(Path.GetDirectoryName(path)!, "bin", "cef", folder, "steamwebhelper.exe"))).ToList();
+        using var snapshot = new Microsoft.Win32.SafeHandles.SafeFileHandle(CreateToolhelp32Snapshot(2, 0), true);
+        if (snapshot.IsInvalid) return targets;
+        var parents = new Dictionary<int, int>();
+        var entry = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
+        if (Process32First(snapshot, ref entry))
+            do { parents[(int)entry.Pid] = (int)entry.ParentPid; } while (Process32Next(snapshot, ref entry));
+        bool added;
+        do
+        {
+            added = false;
+            foreach (var helper in helpers.Where(x => !targets.Contains(x)))
+                if (parents.TryGetValue(helper.Pid, out var parent) && targets.Any(x => x.Pid == parent && x.StartTime <= helper.StartTime && IsCurrent(x)))
+                { targets.Add(helper); added = true; }
+        } while (added);
+        return targets;
+    }
+
+    private static bool IsRunning(Target target)
+    {
+        try { using var process = Process.GetProcessById(target.Pid); return process.StartTime == target.StartTime && !process.HasExited; }
+        catch (ArgumentException) { return false; }
+        catch { return true; }
+    }
+
+    private static bool IsSteam(string path)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+            var installed = (key?.GetValue("SteamExe") as string)?.Replace('/', Path.DirectorySeparatorChar);
+            return installed is not null && string.Equals(Path.GetFullPath(installed), path, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(Path.GetFileName(path), "steam.exe", StringComparison.OrdinalIgnoreCase)
+                && FileVersionInfo.GetVersionInfo(path).CompanyName == "Valve Corporation";
+        }
+        catch { return false; }
     }
 
     private static bool IsSafeExecutable(string path)
@@ -208,7 +281,7 @@ public sealed class WindowsAppService
         return targets;
     }
 
-    private static bool IsCurrent(Snapshot snapshot) => DateTimeOffset.UtcNow - snapshot.CreatedUtc <= TimeSpan.FromMinutes(2) && snapshot.Processes.Any(IsCurrent);
+    private static bool IsCurrent(Snapshot snapshot) => DateTimeOffset.UtcNow - snapshot.CreatedUtc <= TimeSpan.FromMinutes(2) && snapshot.Processes.Count > 0 && snapshot.Processes.All(IsCurrent);
 
     private static bool IsCurrent(Target target)
     {
@@ -259,6 +332,15 @@ public sealed class WindowsAppService
         catch { return null; }
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry
+    {
+        public uint Size, Usage, Pid; public UIntPtr Heap; public uint Module, Threads, ParentPid; public int Priority; public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Exe;
+    }
+    [DllImport("kernel32.dll")] private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "Process32FirstW")] private static extern bool Process32First(Microsoft.Win32.SafeHandles.SafeFileHandle snapshot, ref ProcessEntry entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "Process32NextW")] private static extern bool Process32Next(Microsoft.Win32.SafeHandles.SafeFileHandle snapshot, ref ProcessEntry entry);
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] private struct NotifyIconIdentifier { public uint Size; public IntPtr Window; public uint Id; public Guid Guid; }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }

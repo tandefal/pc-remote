@@ -8,16 +8,18 @@ public sealed class CommandService(WindowsAppService apps)
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, (DateTimeOffset Time, CommandResult Result)> _completed = [];
 
-    public async Task<CommandResult> ExecuteAsync(string requestId, Func<CommandResult> action)
+    public Task<CommandResult> ExecuteAsync(string requestId, Func<CommandResult> action) => ExecuteAsync(requestId, () => Task.FromResult(action()));
+
+    public async Task<CommandResult> ExecuteAsync(string requestId, Func<Task<CommandResult>> action, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(requestId) || requestId.Length > 256) return new(false, "Требуется корректный идентификатор запроса.");
-        await _gate.WaitAsync();
+        await _gate.WaitAsync(cancellationToken);
         try
         {
             var cutoff = DateTimeOffset.UtcNow.AddMinutes(-10);
             foreach (var key in _completed.Where(x => x.Value.Time < cutoff).Select(x => x.Key).ToList()) _completed.Remove(key);
             if (_completed.TryGetValue(requestId, out var old)) return old.Result;
-            var result = action(); _completed[requestId] = (DateTimeOffset.UtcNow, result); return result;
+            var result = await action(); _completed[requestId] = (DateTimeOffset.UtcNow, result); return result;
         }
         finally { _gate.Release(); }
     }
