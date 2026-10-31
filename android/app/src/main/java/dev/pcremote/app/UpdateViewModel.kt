@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -29,6 +31,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     val state = mutable.asStateFlow()
 
     private fun connection(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+        require(URL(url).protocol == "https")
         connectTimeout = 15000; readTimeout = 30000
         setRequestProperty("User-Agent", "PCRemote/${BuildConfig.VERSION_NAME}")
     }
@@ -82,6 +85,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
                         c.inputStream.use { input -> file.outputStream().use { output ->
                             val buffer = ByteArray(81920); var total = 0L
                             while (true) {
+                                coroutineContext.ensureActive()
                                 val count = input.read(buffer)
                                 if (count < 0) break
                                 total += count; require(total <= release.size)
@@ -120,6 +124,7 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
                 mutable.value = current.copy(message = "Разрешите установку из этого источника, вернитесь и снова нажмите «Установить».")
                 return
             }
+            current.release?.let { validate(file, it) } ?: error("Нет данных обновления")
             val uri = FileProvider.getUriForFile(app, "${app.packageName}.updates", file)
             app.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
         } catch (_: Exception) { mutable.value = current.copy(message = "Не удалось открыть установщик Android. Повторите скачивание.") }

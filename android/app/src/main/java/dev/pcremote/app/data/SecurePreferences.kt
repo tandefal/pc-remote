@@ -15,9 +15,10 @@ import javax.crypto.spec.GCMParameterSpec
 class SecurePreferences(context: Context) {
     private val prefs = context.getSharedPreferences("secure", Context.MODE_PRIVATE)
     private val alias = "pc_remote_credentials"
-    private fun key(): SecretKey {
+    private fun key(create: Boolean = true): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(alias, null) as? SecretKey)?.let { return it }
+        check(create) { "Ключ хранилища недоступен. Сохранённые данные не изменены." }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
             init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build()); generateKey()
         }
@@ -27,17 +28,19 @@ class SecurePreferences(context: Context) {
         computers.forEach { array.put(it.toJson()) }
         val plain = JSONObject().put("computers", array).put("activeId", activeId).toString().toByteArray()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        prefs.edit().putString("data", Base64.encodeToString(cipher.iv + cipher.doFinal(plain), Base64.NO_WRAP)).apply()
+        prefs.edit().putString("data", Base64.encodeToString(cipher.iv + cipher.doFinal(plain), Base64.NO_WRAP)).commit().also { check(it) { "Не удалось сохранить настройки." } }
     }
 
     private fun JSONObject.toCredentials() = ComputerCredentials(getString("id"), getString("name"), getString("host"), getInt("port"), getString("token"), getString("cert"))
     private fun ComputerCredentials.toJson() = JSONObject().put("id", id).put("name", name).put("host", host).put("port", port).put("token", token).put("cert", certificateSha256)
 
-    private fun read(): Pair<List<ComputerCredentials>, String?> = try {
+    private fun read(): Pair<List<ComputerCredentials>, String?> {
+        try {
         val raw = Base64.decode(prefs.getString("data", null) ?: return emptyList<ComputerCredentials>() to null, Base64.NO_WRAP); val iv = raw.copyOfRange(0, 12)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv)) }
+        require(raw.size >= 28) { "Настройки повреждены." }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(false), GCMParameterSpec(128, iv)) }
         val root = JSONObject(String(cipher.doFinal(raw.copyOfRange(12, raw.size))))
-        if (!root.has("computers")) {
+        return if (!root.has("computers")) {
             val legacy = listOf(root.toCredentials())
             write(legacy, legacy.first().id)
             legacy to legacy.first().id
@@ -46,26 +49,34 @@ class SecurePreferences(context: Context) {
             val computers = (0 until array.length()).map { array.getJSONObject(it).toCredentials() }
             computers to root.optString("activeId").takeIf { id -> computers.any { it.id == id } }
         }
-    } catch (_: Exception) { clear(); emptyList<ComputerCredentials>() to null }
+        } catch (e: Exception) {
+            val message = when (e) {
+                is java.security.GeneralSecurityException -> "Не удалось расшифровать настройки. Сохранённые данные не изменены."
+                is org.json.JSONException, is IllegalArgumentException -> "Настройки повреждены. Сохранённые данные не изменены."
+                else -> "Не удалось прочитать настройки. Сохранённые данные не изменены."
+            }
+            throw java.io.IOException(message, e)
+        }
+    }
 
-    fun loadAll(): List<ComputerCredentials> = read().first
-    fun load(): ComputerCredentials? {
+    @Synchronized fun loadAll(): List<ComputerCredentials> = read().first
+    @Synchronized fun load(): ComputerCredentials? {
         val (computers, activeId) = read()
         return computers.firstOrNull { it.id == activeId } ?: computers.firstOrNull()
     }
-    fun save(value: ComputerCredentials) {
+    @Synchronized fun save(value: ComputerCredentials) {
         val (computers, _) = read()
         write(computers.filterNot { it.id == value.id } + value, value.id)
     }
-    fun select(id: String) {
+    @Synchronized fun select(id: String) {
         val (computers, _) = read()
         if (computers.any { it.id == id }) write(computers, id)
     }
-    fun remove(id: String): List<ComputerCredentials> {
+    @Synchronized fun remove(id: String): List<ComputerCredentials> {
         val (computers, activeId) = read()
         val remaining = computers.filterNot { it.id == id }
         if (remaining.size != computers.size) write(remaining, if (activeId == id) remaining.firstOrNull()?.id else activeId)
         return remaining
     }
-    fun clear() { prefs.edit().clear().apply() }
+    @Synchronized fun clear() { prefs.edit().clear().apply() }
 }

@@ -26,7 +26,9 @@ public partial class App : System.Windows.Application
         ThemeService.ApplyCurrent(this);
         _lifetime = new CancellationTokenSource();
         var store = new SecureStore();
-        var settings = await store.LoadAsync();
+        PCRemote.Windows.Models.AppSettings settings;
+        try { settings = await store.LoadAsync(); }
+        catch (Exception ex) { System.Windows.MessageBox.Show(ex.Message, "PC Remote", MessageBoxButton.OK, MessageBoxImage.Error); Shutdown(); return; }
         var pairing = new PairingService(store, settings);
         var apps = new WindowsAppService();
         var commands = new CommandService(apps);

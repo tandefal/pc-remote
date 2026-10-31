@@ -33,6 +33,28 @@ var directory = Path.Combine(Path.GetTempPath(), "PCRemoteChecks", Guid.NewGuid(
 Directory.CreateDirectory(directory);
 var path = Path.Combine(directory, "settings.dat");
 var store = new SecureStore(path);
+void StorageCheck(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); }
+StorageCheck((await store.LoadAsync()).Devices.Count == 0, "Missing settings");
+var corruptPath = Path.Combine(directory, "corrupt.dat");
+var corruptStore = new SecureStore(corruptPath);
+var corruptBytes = new byte[] { 1, 2, 3 };
+await File.WriteAllBytesAsync(corruptPath, corruptBytes);
+try { await corruptStore.LoadAsync(); throw new Exception("Corrupt settings accepted"); } catch (InvalidDataException) { }
+try { await corruptStore.SaveAsync(new AppSettings()); throw new Exception("Corrupt settings overwritten"); } catch (InvalidOperationException) { }
+StorageCheck((await File.ReadAllBytesAsync(corruptPath)).SequenceEqual(corruptBytes), "Decryption failure preserves file and blocks overwrite");
+var invalidJson = System.Security.Cryptography.ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes("null"), System.Text.Encoding.UTF8.GetBytes("PCRemote.Settings.v1"), System.Security.Cryptography.DataProtectionScope.CurrentUser);
+var jsonPath = Path.Combine(directory, "invalid-json.dat");
+await File.WriteAllBytesAsync(jsonPath, invalidJson);
+try { await new SecureStore(jsonPath).LoadAsync(); throw new Exception("Null JSON accepted"); } catch (InvalidDataException) { }
+StorageCheck((await File.ReadAllBytesAsync(jsonPath)).SequenceEqual(invalidJson), "Invalid encrypted JSON preserved");
+var concurrentSettings = new AppSettings();
+concurrentSettings.Devices.Add(new TrustedDevice { Id = "legacy", Name = "Телефон", TokenHash = SecureStore.HashToken("synthetic") });
+await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => store.SaveAsync(concurrentSettings)));
+StorageCheck((await store.LoadAsync()).Devices.Single().Id == "legacy", "Concurrent atomic saves preserve pairing");
+var addressCheck = typeof(ServerHost).GetMethod("IsLocalAddress", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+foreach (var (address, allowed) in new (string?, bool)[] { (null, false), ("127.0.0.1", true), ("192.168.1.2", true), ("10.2.3.4", true), ("172.31.0.2", true), ("172.32.0.1", false), ("8.8.8.8", false), ("::ffff:192.168.1.2", true), ("fe80::1", true), ("fd00::1", true), ("2001:4860:4860::8888", false) })
+    StorageCheck((bool)addressCheck.Invoke(null, new object?[] { address is null ? null : IPAddress.Parse(address) })! == allowed, "LAN address policy: " + (address ?? "missing"));
+if (args.Contains("--storage-only")) return;
 var listener = new TcpListener(IPAddress.Loopback, 0);
 listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
 var settings = new AppSettings { Port = port, ComputerName = "Проверка PC Remote" };
@@ -47,7 +69,7 @@ handler.ServerCertificateCustomValidationCallback = (_, certificate, _, _) => ce
 using var client = new HttpClient(handler) { BaseAddress = new Uri($"https://127.0.0.1:{port}"), Timeout = TimeSpan.FromSeconds(10) };
 void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); }
 Check((await client.GetAsync("/api/v1/health")).IsSuccessStatusCode, "HTTPS health with certificate pin");
-foreach (var route in new[] { "/api/v1/apps", "/api/v1/auth/check" })
+foreach (var route in new[] { "/api/v1/apps", "/api/v1/auth/check", "/api/v1/events" })
     Check((await client.GetAsync(route)).StatusCode == HttpStatusCode.Unauthorized, "Unauthorized GET " + route);
 foreach (var route in new[] { "/api/v1/commands/lock", "/api/v1/commands/shutdown", "/api/v1/apps/example/exit", "/api/v1/apps/terminate-all" })
     Check((await client.PostAsync(route, null)).StatusCode == HttpStatusCode.Unauthorized, "Unauthorized POST " + route);
@@ -59,6 +81,11 @@ var credentials = (await response.Content.ReadFromJsonAsync<PairResponse>())!;
 Check((await client.PostAsJsonAsync("/api/v1/pair", new PairRequest(secret, "Повтор"))).StatusCode == HttpStatusCode.Unauthorized, "Single use QR");
 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", credentials.Token);
 Check((await client.GetAsync("/api/v1/auth/check")).IsSuccessStatusCode, "Device authorization");
+var beforeSeen = await File.ReadAllBytesAsync(path);
+await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => client.GetAsync("/api/v1/auth/check")));
+Check((await File.ReadAllBytesAsync(path)).SequenceEqual(beforeSeen), "Parallel authorized requests defer LastSeen disk writes");
+using (var malformed = new StringContent("{", System.Text.Encoding.UTF8, "application/json"))
+    Check((await client.PostAsync("/api/v1/pair", malformed)).StatusCode == HttpStatusCode.BadRequest, "Malformed JSON rejected");
 Check((await client.PostAsync("/api/v1/commands/lock", null)).StatusCode == HttpStatusCode.BadRequest, "Dangerous command without request id rejected");
 using (var invalidTarget = new HttpRequestMessage(HttpMethod.Post, "/api/v1/apps/nonexistent/terminate"))
 {
@@ -122,8 +149,30 @@ var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => commands.Ex
 Check(calls == 1 && results.All(x => x.Success), "Concurrent request deduplication");
 await commands.ExecuteAsync("", () => { calls++; return new(true, "unexpected"); });
 Check(calls == 1, "Missing request id rejected before action");
+using var streamTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+using var streamResponse = await client.GetAsync("/api/v1/events", HttpCompletionOption.ResponseHeadersRead, streamTimeout.Token);
+Check(streamResponse.IsSuccessStatusCode && streamResponse.Content.Headers.ContentType?.MediaType == "text/event-stream", "Authenticated state stream");
+using var streamReader = new StreamReader(await streamResponse.Content.ReadAsStreamAsync(streamTimeout.Token));
+var firstEvent = await streamReader.ReadLineAsync(streamTimeout.Token);
+using var stateEvent = JsonDocument.Parse(firstEvent![6..]);
+Check(stateEvent.RootElement.GetProperty("computerId").GetString() == settings.ComputerId && stateEvent.RootElement.GetProperty("apps").ValueKind == JsonValueKind.Array, "Initial state snapshot and applications");
 settings.Devices.Clear(); await store.SaveAsync(settings);
+string? eventLine;
+do { eventLine = await streamReader.ReadLineAsync(streamTimeout.Token); } while (eventLine is not null && eventLine != "event: revoked");
+Check(eventLine == "event: revoked", "Open stream stops after authorization revoked");
 Check((await client.GetAsync("/api/v1/auth/check")).StatusCode == HttpStatusCode.Unauthorized, "Immediate token revocation");
+using (var oversized = new StringContent(new string('x', 17 * 1024), System.Text.Encoding.UTF8, "application/json"))
+    Check((await client.PostAsync("/api/v1/pair", oversized)).StatusCode == HttpStatusCode.RequestEntityTooLarge, "Oversized request rejected");
+if (!args.Contains("--android"))
+{
+var limited = false;
+for (var attempt = 0; attempt < 121; attempt++)
+{
+    using var rateResponse = await client.GetAsync("/api/v1/health");
+    if ((int)rateResponse.StatusCode == 429) { limited = true; break; }
+}
+Check(limited, "Per-address request rate limited");
+}
 Console.WriteLine("All checks passed. Only synthetic test windows were terminated; lock and shutdown were not invoked.");
 if (args.Contains("--android"))
 {

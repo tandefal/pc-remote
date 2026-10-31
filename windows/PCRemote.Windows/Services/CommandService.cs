@@ -22,7 +22,9 @@ public sealed class CommandService(WindowsAppService apps)
         finally { _gate.Release(); }
     }
 
-    public static CommandResult Lock() => LockWorkStation() ? new(true, "Сеанс заблокирован.") : new(false, "Windows отклонила блокировку.");
+    public static CommandResult Lock() => SessionState.IsLocked() == true
+        ? new(false, "Компьютер уже заблокирован.")
+        : LockWorkStation() ? new(true, "Сеанс заблокирован.") : new(false, "Windows отклонила блокировку.");
     public static CommandResult Shutdown()
     {
         if (!EnableShutdownPrivilege()) return new(false, "Недостаточно прав для выключения.");

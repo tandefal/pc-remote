@@ -1,0 +1,25 @@
+name: Проверки
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet build tests/PCRemote.Checks -c Release
+      - run: dotnet run --no-build --project tests/PCRemote.Checks -c Release -- --storage-only
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+        working-directory: android

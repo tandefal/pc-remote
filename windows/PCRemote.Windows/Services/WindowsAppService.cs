@@ -64,6 +64,13 @@ public sealed class WindowsAppService
                 .Select(x => new WindowTarget(x.Handle, x.Pid, targetByPid[x.Pid].StartTime, x.Visible))
                 .ToList();
             var id = Guid.NewGuid().ToString("N");
+            lock (_sync)
+            {
+                var existing = _snapshot.FirstOrDefault(x =>
+                    x.Value.Processes.OrderBy(p => p.Pid).SequenceEqual(targets.OrderBy(p => p.Pid)) &&
+                    x.Value.Windows.OrderBy(w => w.Handle.ToInt64()).SequenceEqual(ownedWindows.OrderBy(w => w.Handle.ToInt64())));
+                if (existing.Key is not null) id = existing.Key;
+            }
             next[id] = new Snapshot(targets, ownedWindows, DateTimeOffset.UtcNow);
             result.Add(new AppInfo(id, group.First().Name, TryReadIcon(group.Key), ownedWindows.Count(x => x.Visible)));
         }

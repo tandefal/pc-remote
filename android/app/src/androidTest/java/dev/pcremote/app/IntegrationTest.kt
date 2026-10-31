@@ -7,6 +7,7 @@ import dev.pcremote.app.data.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.launch
 
 @RunWith(AndroidJUnit4::class)
 class IntegrationTest {
@@ -19,6 +20,23 @@ class IntegrationTest {
         assertEquals(computer.name, api.health(credentials))
         api.authCheck(credentials)
         api.apps(credentials)
+        kotlinx.coroutines.runBlocking {
+            kotlinx.coroutines.withTimeout(15_000) {
+                val received = kotlinx.coroutines.CompletableDeferred<Unit>()
+                val stream = launch {
+                    api.events(credentials) { snapshot ->
+                        assertEquals(credentials.id, snapshot.getString("computerId"))
+                        assertNotNull(snapshot.getJSONArray("apps"))
+                        received.complete(Unit)
+                    }
+                }
+                try { received.await() } finally { stream.cancel(); stream.join() }
+            }
+            try {
+                kotlinx.coroutines.withTimeout(10_000) { api.events(credentials.copy(token = "invalid")) { fail("Unauthorized stream") } }
+                fail("Invalid stream token accepted")
+            } catch (e: ApiException) { assertEquals(401, e.status) }
+        }
         try { api.authCheck(credentials.copy(token = "invalid")); fail("Invalid token accepted") } catch (e: ApiException) { assertEquals(401, e.status) }
         try { api.health(credentials.copy(certificateSha256 = "00".repeat(32))); fail("Invalid TLS pin accepted") } catch (_: javax.net.ssl.SSLException) { }
         try { api.pair(computer, args.getString("secret")!!, "Replay"); fail("Pairing replay accepted") } catch (e: ApiException) { assertEquals(401, e.status) }
@@ -27,7 +45,31 @@ class IntegrationTest {
         try {
             prefs.save(credentials)
             assertEquals(credentials, SecurePreferences(context).load())
-            ActivityScenario.launch(MainActivity::class.java).use { scenario -> scenario.onActivity { assertFalse(it.isFinishing) } }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var vm: MainViewModel
+                scenario.onActivity { vm = androidx.lifecycle.ViewModelProvider(it)[MainViewModel::class.java] }
+                fun awaitOnline() {
+                    for (attempt in 0 until 150) {
+                        if (vm.state.value.online) return
+                        Thread.sleep(100)
+                    }
+                    fail("Состояние ПК не получено")
+                }
+                awaitOnline()
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+                assertFalse(vm.state.value.online)
+                assertTrue(vm.state.value.apps.isEmpty())
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+                awaitOnline()
+            }
+            val raw = context.getSharedPreferences("secure", android.content.Context.MODE_PRIVATE)
+            val encrypted = raw.getString("data", null)!!
+            raw.edit().putString("data", "broken").commit()
+            try { prefs.loadAll(); fail("Corrupt storage accepted") } catch (_: java.io.IOException) { }
+            try { prefs.save(credentials); fail("Corrupt storage overwritten") } catch (_: java.io.IOException) { }
+            assertEquals("broken", raw.getString("data", null))
+            raw.edit().putString("data", encrypted).commit()
+            assertEquals(credentials, prefs.load())
         } finally { prefs.clear() }
     }
 }

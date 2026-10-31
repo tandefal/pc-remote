@@ -10,20 +10,34 @@ public sealed class SecureStore
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("PCRemote.Settings.v1");
     private readonly string _path;
+    private bool _loadFailed;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public SecureStore(string? path = null) => _path = path ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PCRemote", "settings.dat");
 
     public async Task<AppSettings> LoadAsync()
     {
-        if (!File.Exists(_path)) return new AppSettings();
+        await _gate.WaitAsync();
         try
         {
-            var encrypted = await File.ReadAllBytesAsync(_path);
+            byte[] encrypted;
+            try { encrypted = await File.ReadAllBytesAsync(_path); }
+            catch (FileNotFoundException) { return new AppSettings(); }
+            catch (DirectoryNotFoundException) { return new AppSettings(); }
             var json = ProtectedData.Unprotect(encrypted, Entropy, DataProtectionScope.CurrentUser);
-            return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? throw new JsonException("Пустое хранилище настроек.");
+            if (settings.Devices is null || string.IsNullOrWhiteSpace(settings.ComputerId) || settings.Port is < 1 or > 65535 ||
+                settings.Devices.Any(device => device is null || device.TokenHash is null || device.TokenHash.Length != 64 || !device.TokenHash.All(Uri.IsHexDigit)))
+                throw new JsonException("Некорректные настройки.");
+            return settings;
         }
-        catch { return new AppSettings(); }
+        catch (Exception ex)
+        {
+            _loadFailed = true;
+            throw new InvalidDataException(ex is CryptographicException ? "Не удалось расшифровать настройки. Исходный файл сохранён." :
+                ex is JsonException ? "Настройки повреждены. Исходный файл сохранён." : "Не удалось прочитать настройки. Проверьте доступ к файлу.", ex);
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task SaveAsync(AppSettings settings)
@@ -31,6 +45,7 @@ public sealed class SecureStore
         await _gate.WaitAsync();
         try
         {
+            if (_loadFailed) throw new InvalidOperationException("Запись запрещена после ошибки чтения настроек.");
             Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
             byte[] json;
             lock (settings) json = JsonSerializer.SerializeToUtf8Bytes(settings);

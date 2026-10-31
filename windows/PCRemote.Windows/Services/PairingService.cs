@@ -25,6 +25,7 @@ public sealed class PairingService(SecureStore store, AppSettings settings)
 
     public async Task<PairResponse?> PairAsync(PairRequest request, string fingerprint)
     {
+        if (string.IsNullOrEmpty(request.Secret) || request.Secret.Length > 128) return null;
         string expected;
         lock (_sync)
         {
@@ -41,7 +42,8 @@ public sealed class PairingService(SecureStore store, AppSettings settings)
         var token = SecureStore.RandomSecret(48);
         var device = new TrustedDevice { Id = Guid.NewGuid().ToString("N"), Name = string.IsNullOrWhiteSpace(request.DeviceName) ? "Android" : request.DeviceName.Trim()[..Math.Min(request.DeviceName.Trim().Length, 80)], TokenHash = SecureStore.HashToken(token), CreatedUtc = DateTimeOffset.UtcNow };
         lock (settings) settings.Devices.Add(device);
-        await store.SaveAsync(settings);
+        try { await store.SaveAsync(settings); }
+        catch { lock (settings) settings.Devices.Remove(device); throw; }
         return new PairResponse(settings.ComputerId, settings.ComputerName, device.Id, token, fingerprint);
     }
 }

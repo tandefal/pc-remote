@@ -33,6 +33,7 @@ android/
   app/src/main/java/dev/pcremote/app/data/  сеть, NSD и Keystore
   app/src/androidTest/                      тест реального HTTPS-клиента на эмуляторе
 tests/PCRemote.Checks/                     безопасные Windows/HTTPS integration checks
+.github/workflows/checks.yml              CI: Windows build, storage/network policy checks, Android build/lint
 tests/Test-Android.ps1                     сборка и запуск сквозной проверки на эмуляторе
 ```
 
@@ -46,21 +47,24 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 - `Services/AutoStartService.cs` — HKCU Run без повышения прав; по умолчанию выключен, включается пользователем.
 - `Services/ThemeService.cs` — системная тема Windows.
 - `Services/UpdateService.cs` — ручная проверка последнего стабильного GitHub Release, скачивание установщика с проверкой размера/SHA-256; окно запускает установщик и корректно завершает приложение.
-- `Services/ServerHost.cs` — Kestrel HTTPS, Minimal API, локальная адресная проверка, bearer-фильтр, DNS-SD только с адресами частных IPv4-адаптеров Ethernet/Wi-Fi с локальным шлюзом.
+- `Services/ServerHost.cs` — Kestrel HTTPS, Minimal API, локальная адресная проверка и проверка интерфейса назначения Ethernet/Wi-Fi, лимит тела 16 КиБ и 120 запросов в минуту на адрес, bearer-фильтр, отложенное сохранение LastSeen раз в 60 секунд и при выходе, DNS-SD только с адресами частных IPv4-адаптеров Ethernet/Wi-Fi с локальным шлюзом.
 - `Services/CertificateService.cs` — локальный RSA-сертификат и SHA-256 fingerprint.
 - `Services/PairingService.cs` — трёхминутный одноразовый секрет, лимит попыток, уникальный device token.
-- `Services/SecureStore.cs` — атомарная запись и DPAPI CurrentUser.
+- `Services/SecureStore.cs` — атомарная запись и DPAPI CurrentUser; ошибки чтения сохраняют исходный файл и запрещают запись этим экземпляром.
 - `Services/WindowsAppService.cs` — видимые окна и приложения с действующим значком трея (Shell_NotifyIconGetRect; идентификаторы из NotifyIconSettings и стандартный диапазон 0–16), включая message-only окна; скрытые окна сами по себе не добавляются. Группировка по точному executable path, иконки; обычный запрос на выход и принудительное завершение дерева процессов; проверка PID/start time/path, владельца, сеанса и критичности; случайные идентификаторы снимков действуют 2 минуты.
 - `Services/CommandService.cs` — последовательное выполнение, десятиминутная дедупликация request id, LockWorkStation и ExitWindowsEx для перезагрузки/выключения.
+
+- `Services/SessionState.cs` — чтение состояния блокировки текущего сеанса через WTS; неизвестное состояние передаётся как null.
+- `GET /api/v1/events` — авторизованный SSE: начальное состояние и список приложений, сверка каждые 2 секунды только при открытом потоке; неизменившиеся данные заменяются heartbeat. Токен проверяется повторно, отзыв закрывает поток. Идентификаторы неизменившихся снимков приложений сохраняются.
 
 ## Android
 
 - `MainActivity.kt` — Material 3 UI: подключение, главная, приложения, выбор компьютера и настройки в нижней навигации; закрываемые сообщения об ошибках и результате, подтверждения блокировки, перезагрузки, выключения, выхода и принудительного завершения приложений; встроенный ZXing QR scanner.
 - `UpdateViewModel.kt` — отдельное состояние обновлений в разделе «Настройки» (доступен до сопряжения), GitHub Releases, проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
-- `MainViewModel.kt` — StateFlow, активный health-check выбранного компьютера раз в 5 секунд, многокомпьютерное сопряжение/переключение и событийное обновление приложений.
-- `data/DiscoveryManager.kt` — Android NSD `_pcremote._tcp`, активный MulticastLock для Android 10–12, обновление IP только после совпадения computer id; mDNS не считается доказательством идентичности.
-- `data/ApiClient.kt` — HTTPS с SHA-256 certificate pin, таймауты, bearer token и request id.
-- `data/SecurePreferences.kt` — AES-GCM, Android Keystore и миграция одного старого компьютера в список.
+- `MainViewModel.kt` — StateFlow, поток SSE выбранного компьютера только при активной Activity, переподключение с задержкой 1–10 секунд, многокомпьютерное сопряжение/переключение и синхронизация списка приложений из потока.
+- `data/DiscoveryManager.kt` — Android NSD `_pcremote._tcp`, очередь разрешения с отдельными ResolveListener и отсечением устаревших callbacks, активный MulticastLock для Android 10–12, обновление IP только после совпадения computer id; mDNS не считается доказательством идентичности.
+- `data/ApiClient.kt` — отменяемый поток SSE с TLS pinning, таймаутом чтения и проверкой computer id; HTTPS с SHA-256 certificate pin, ограниченный кэш TLS socket factory по отпечатку, запрет redirects к ПК, таймауты, bearer token и request id.
+- `data/SecurePreferences.kt` — AES-GCM, Android Keystore, последовательные операции и миграция одного старого компьютера в список; ошибки не удаляют данные.
 - `data/Models.kt` — локальные модели ПК и приложений.
 
 ## API
@@ -71,6 +75,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 |---|---|---|
 | `GET /api/v1/health` | лёгкая проверка доступности | нет |
 | `POST /api/v1/pair` | одноразовое сопряжение | QR secret + TLS pin |
+| `GET /api/v1/events` | поток состояния сеанса и списка приложений | token |
 | `GET /api/v1/auth/check` | проверка токена | token |
 | `POST /api/v1/commands/lock` | блокировка сеанса | token + request id |
 | `POST /api/v1/commands/reboot` | перезагрузка | token + request id |

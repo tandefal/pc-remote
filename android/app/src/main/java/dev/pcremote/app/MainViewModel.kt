@@ -17,26 +17,27 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
 
-data class UiState(val credentials: ComputerCredentials? = null, val computers: List<ComputerCredentials> = emptyList(), val online: Boolean = false, val loading: Boolean = false, val apps: List<RemoteApp> = emptyList(), val error: String? = null, val notice: String? = null, val lockConfirmed: Boolean = false, val page: Page = Page.HOME, val pairing: Boolean = false)
+data class UiState(val credentials: ComputerCredentials? = null, val computers: List<ComputerCredentials> = emptyList(), val online: Boolean = false, val loading: Boolean = false, val apps: List<RemoteApp> = emptyList(), val error: String? = null, val notice: String? = null, val locked: Boolean? = null, val page: Page = Page.HOME, val pairing: Boolean = false)
 enum class Page { HOME, APPS, COMPUTERS, CONNECT, SETTINGS }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = (application as PCRemoteApplication).preferences
     private val api = ApiClient()
-    private val initialComputers = prefs.loadAll()
-    private val initialCredentials = prefs.load()
-    private val _state = MutableStateFlow(UiState(credentials = initialCredentials, computers = initialComputers, page = if (initialCredentials == null) Page.CONNECT else Page.HOME))
+    private val initialRead = runCatching { prefs.loadAll() to prefs.load() }
+    private val initialComputers = initialRead.getOrNull()?.first.orEmpty()
+    private val initialCredentials = initialRead.getOrNull()?.second
+    private val _state = MutableStateFlow(UiState(credentials = initialCredentials, computers = initialComputers, error = initialRead.exceptionOrNull()?.message, page = if (initialCredentials == null) Page.CONNECT else Page.HOME))
     val state = _state.asStateFlow()
     private var pendingPayload: PairingPayload? = null
     private val discovered = mutableMapOf<String, DiscoveredComputer>()
     private var monitor: Job? = null
     private var pairingTimeout: Job? = null
-    private var lockFeedback: Job? = null
+    private var active = false
     private val discovery = DiscoveryManager(application, ::computerFound) { error(it) }
 
-    fun startActive() { discovery.start(); startMonitor() }
-    fun stopActive() { discovery.stop(); monitor?.cancel(); monitor = null }
-    fun select(page: Page) { _state.value = _state.value.copy(page = page, error = null); if (page == Page.APPS) refreshApps() }
+    fun startActive() { if (active) return; active = true; discovery.start(); startMonitor() }
+    fun stopActive() { active = false; discovery.stop(); monitor?.cancel(); monitor = null; _state.value = _state.value.copy(online = false, locked = null, apps = emptyList()) }
+    fun select(page: Page) { _state.value = _state.value.copy(page = page, error = null) }
     fun selectComputer(id: String) {
         if (_state.value.loading) return
         val computer = _state.value.computers.firstOrNull { it.id == id } ?: return
@@ -62,27 +63,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissError() { _state.value = _state.value.copy(error = null) }
     fun dismissNotice() { _state.value = _state.value.copy(notice = null) }
     private fun computerFound(found: DiscoveredComputer) {
+        viewModelScope.launch {
+            try { handleComputerFound(found) }
+            catch (e: Exception) { error(e.message ?: "Не удалось сохранить адрес компьютера.") }
+        }
+    }
+    private fun handleComputerFound(found: DiscoveredComputer) {
         discovered[found.id] = found
         val current = _state.value.credentials
-        if (current?.id == found.id && (current.host != found.host || current.port != found.port)) { val updated = current.copy(host = found.host, port = found.port); prefs.save(updated); _state.value = _state.value.copy(credentials = updated, computers = prefs.loadAll()) }
+        if (current?.id == found.id && (current.host != found.host || current.port != found.port)) { val updated = current.copy(host = found.host, port = found.port); prefs.save(updated); _state.value = _state.value.copy(credentials = updated, computers = prefs.loadAll()); startMonitor() }
         val pending = pendingPayload ?: return
         if (pending.id != found.id || !pending.certificateSha256.equals(found.certificateSha256, true)) return
-        pendingPayload = null; pairingTimeout?.cancel(); viewModelScope.launch { runTask { val credentials = api.pair(found, pending.secret, Build.MODEL); prefs.save(credentials); _state.value = _state.value.copy(credentials = credentials, computers = prefs.loadAll(), pairing = false, page = Page.HOME, online = true) } }
+        pendingPayload = null; pairingTimeout?.cancel(); viewModelScope.launch { runTask { val credentials = api.pair(found, pending.secret, Build.MODEL); prefs.save(credentials); _state.value = _state.value.copy(credentials = credentials, computers = prefs.loadAll(), pairing = false, page = Page.HOME, online = false) }; startMonitor() }
     }
-    private fun startMonitor() { monitor?.cancel(); monitor = viewModelScope.launch { while (isActive) { val c = _state.value.credentials; if (c != null) try { withContext(Dispatchers.IO) { api.health(c); api.authCheck(c) }; if (_state.value.credentials?.id == c.id) _state.value = _state.value.copy(online = true) } catch (e: ApiException) { if (_state.value.credentials?.id == c.id) { if (e.status == 401) forgetRevoked(c) else _state.value = _state.value.copy(online = false) } } catch (_: Exception) { if (_state.value.credentials?.id == c.id) _state.value = _state.value.copy(online = false) }; delay(5_000) } } }
+    private fun startMonitor() {
+        monitor?.cancel()
+        if (!active) return
+        _state.value = _state.value.copy(online = false, locked = null, apps = emptyList())
+        monitor = viewModelScope.launch {
+            var retry = 1000L
+            while (isActive) {
+                val c = _state.value.credentials
+                if (c == null) { delay(1000); continue }
+                try {
+                    val owner = coroutineContext[Job]!!
+                    api.events(c) { data ->
+                        viewModelScope.launch update@ {
+                            if (!owner.isActive || _state.value.credentials != c) return@update
+                            val a = data.getJSONArray("apps")
+                            val list = (0 until a.length()).map { a.getJSONObject(it).run {
+                                RemoteApp(getString("id"), getString("name"), optString("iconPngBase64").takeIf { v -> v.isNotBlank() && v != "null" }, getInt("windowCount"))
+                            } }
+                            _state.value = _state.value.copy(online = true, locked = if (data.isNull("locked")) null else data.getBoolean("locked"), apps = list)
+                            retry = 1000L
+                        }
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (e: ApiException) { if (e.status == 401 && _state.value.credentials == c) forgetRevoked(c) }
+                catch (_: Exception) { }
+                if (_state.value.credentials == c) _state.value = _state.value.copy(online = false, locked = null, apps = emptyList())
+                delay(retry)
+                retry = (retry * 2).coerceAtMost(10000L)
+            }
+        }
+    }
     private fun forgetRevoked(computer: ComputerCredentials) {
         val remaining = prefs.remove(computer.id)
         val active = prefs.load()
         _state.value = UiState(credentials = active, computers = remaining, page = if (active == null) Page.CONNECT else Page.HOME, error = "Доступ к компьютеру «${computer.name}» отозван.")
     }
-    fun refreshApps() { val c = _state.value.credentials ?: return; viewModelScope.launch { runTask { val list = api.apps(c); _state.value = _state.value.copy(apps = list) } } }
-    fun lock() = command("/api/v1/commands/lock", false, true)
-    fun reboot() = command("/api/v1/commands/reboot", false)
-    fun shutdown() = command("/api/v1/commands/shutdown", false)
-    fun exit(id: String) = command("/api/v1/apps/$id/exit", true)
-    fun terminate(id: String) = command("/api/v1/apps/$id/terminate", true)
-    fun terminateAll() = command("/api/v1/apps/terminate-all", true)
-    private fun command(path: String, refresh: Boolean, confirmsLock: Boolean = false) { val c = _state.value.credentials ?: return; viewModelScope.launch { runTask { val message = api.command(c, path); val updatedApps = if (refresh) api.apps(c) else _state.value.apps; _state.value = _state.value.copy(apps = updatedApps, notice = message, lockConfirmed = confirmsLock || _state.value.lockConfirmed); if (confirmsLock) { lockFeedback?.cancel(); lockFeedback = viewModelScope.launch { delay(8_000); _state.value = _state.value.copy(lockConfirmed = false) } } } } }
+    fun refreshApps() { if (_state.value.online) startMonitor() }
+    fun lock() { if (_state.value.locked == false) command("/api/v1/commands/lock") }
+    fun reboot() = command("/api/v1/commands/reboot")
+    fun shutdown() = command("/api/v1/commands/shutdown")
+    fun exit(id: String) = command("/api/v1/apps/$id/exit")
+    fun terminate(id: String) = command("/api/v1/apps/$id/terminate")
+    fun terminateAll() = command("/api/v1/apps/terminate-all")
+    private fun command(path: String) {
+        if (!_state.value.online) return
+        val c = _state.value.credentials ?: return
+        viewModelScope.launch { runTask {
+            val message = api.command(c, path)
+            if (_state.value.credentials == c) _state.value = _state.value.copy(notice = message)
+        } }
+    }
     private suspend fun runTask(block: suspend () -> Unit) {
         if (_state.value.loading) return
         _state.value = _state.value.copy(loading = true, error = null, notice = null)
@@ -94,5 +138,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         finally { _state.value = _state.value.copy(loading = false, pairing = false) }
     }
     private fun error(message: String) { _state.value = _state.value.copy(error = message, notice = null, pairing = false) }
-    override fun onCleared() { discovery.stop(); monitor?.cancel(); pairingTimeout?.cancel(); lockFeedback?.cancel(); super.onCleared() }
+    override fun onCleared() { discovery.stop(); monitor?.cancel(); pairingTimeout?.cancel();  super.onCleared() }
 }

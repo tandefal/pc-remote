@@ -19,12 +19,12 @@ public static class UpdateService
         return client;
     }
 
-    public static async Task<ReleaseUpdate?> CheckAsync()
+    public static async Task<ReleaseUpdate?> CheckAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await Client.GetAsync("https://api.github.com/repos/tandefal/pc-remote/releases/latest");
+        using var response = await Client.GetAsync("https://api.github.com/repos/tandefal/pc-remote/releases/latest", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         var root = json.RootElement;
         var tag = root.GetProperty("tag_name").GetString()!;
         if (!Version.TryParse(tag.TrimStart('v'), out var version) || version <= Version.Parse(CurrentVersion)) return null;
@@ -43,31 +43,34 @@ public static class UpdateService
         throw new InvalidDataException("Установщик Windows ещё не опубликован в релизе.");
     }
 
-    public static async Task<string> DownloadAsync(ReleaseUpdate update)
+    public static async Task<string> DownloadAsync(ReleaseUpdate update, CancellationToken cancellationToken = default)
     {
+        if (!update.Url.StartsWith("https://github.com/tandefal/pc-remote/releases/download/", StringComparison.Ordinal) ||
+            update.Size is <= 0 or > 314572800 || update.Sha256.Length != 64 || !update.Sha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException("Некорректные метаданные обновления.");
         var directory = Path.Combine(Path.GetTempPath(), "PCRemote", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "PCRemote-Setup.exe");
         try
         {
-            using var response = await Client.GetAsync(update.Url, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await Client.GetAsync(update.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
-            await using (var input = await response.Content.ReadAsStreamAsync())
+            await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
             await using (var output = File.Create(path))
             {
                 var buffer = new byte[81920];
                 long total = 0;
                 int count;
-                while ((count = await input.ReadAsync(buffer)) > 0)
+                while ((count = await input.ReadAsync(buffer, cancellationToken)) > 0)
                 {
                     total += count;
                     if (total > update.Size) throw new InvalidDataException("Размер обновления не совпадает.");
-                    await output.WriteAsync(buffer.AsMemory(0, count));
+                    await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
                 }
                 if (total != update.Size) throw new InvalidDataException("Обновление скачано не полностью.");
             }
             await using var file = File.OpenRead(path);
-            var hash = Convert.ToHexString(await SHA256.HashDataAsync(file));
+            var hash = Convert.ToHexString(await SHA256.HashDataAsync(file, cancellationToken));
             if (!hash.Equals(update.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Контрольная сумма обновления не совпадает.");
             return path;
