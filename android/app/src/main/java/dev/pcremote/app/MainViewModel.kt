@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.io.IOException
 
 data class UiState(val monitoring: SystemMetrics? = null, val history: List<MonitoringPoint> = emptyList(), val credentials: ComputerCredentials? = null, val computers: List<ComputerCredentials> = emptyList(), val online: Boolean = false, val connecting: Boolean = false, val loading: Boolean = false, val apps: List<RemoteApp> = emptyList(), val error: String? = null, val notice: String? = null, val locked: Boolean? = null, val page: Page = Page.HOME, val pairing: Boolean = false)
-enum class Page { HOME, APPS, COMPUTERS, CONNECT, SETTINGS }
+enum class Page { HOME, SYSTEM, APPS, COMPUTERS, CONNECT, SETTINGS }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = (application as PCRemoteApplication).preferences

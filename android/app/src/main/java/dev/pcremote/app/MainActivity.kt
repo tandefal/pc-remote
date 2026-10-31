@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
         NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
             if (state.credentials != null) {
                 NavItem(Page.HOME, state.page, Icons.Outlined.Home, "Главная", vm::select)
+                NavItem(Page.SYSTEM, state.page, Icons.Outlined.MonitorHeart, "Система", vm::select)
                 NavItem(Page.APPS, state.page, Icons.Outlined.Apps, "Приложения", vm::select)
                 NavItem(Page.COMPUTERS, state.page, Icons.Outlined.Computer, "Компьютеры", vm::select)
             } else {
@@ -82,6 +83,7 @@ class MainActivity : ComponentActivity() {
             when (state.page) {
                 Page.CONNECT -> ConnectScreen(state, { scan(vm::acceptQr, vm::reportError) })
                 Page.HOME -> if (state.connecting) ConnectingScreen(state) else HomeScreen(state, vm)
+                Page.SYSTEM -> if (state.connecting) ConnectingScreen(state) else SystemScreen(state)
                 Page.APPS -> if (state.connecting) ConnectingScreen(state) else AppsScreen(state, vm)
                 Page.COMPUTERS -> ComputersScreen(state, vm) { scan(vm::acceptQr, vm::reportError) }
                 Page.SETTINGS -> SettingsScreen(updates)
@@ -141,6 +143,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable private fun SystemScreen(state: UiState) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 20.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { Text(state.credentials?.name.orEmpty(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { MonitoringPanel(state) }
+    }
+}
+
 @Composable private fun HomeScreen(state: UiState, vm: MainViewModel) {
     var confirmShutdown by remember { mutableStateOf(false) }
     var confirmReboot by remember { mutableStateOf(false) }
@@ -165,7 +178,6 @@ class MainActivity : ComponentActivity() {
             }
             Spacer(Modifier.height(28.dp))
         }
-        item { MonitoringPanel(state); Spacer(Modifier.height(20.dp)) }
         item { ActionCard(Icons.Outlined.Lock, if (state.locked == true) "Компьютер заблокирован" else "Заблокировать", if (state.locked == true) "Сеанс Windows заблокирован" else "Заблокировать текущий сеанс Windows", state.online && !state.loading && state.locked == false, action = vm::lock); Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.RestartAlt, "Перезагрузить", "Перезапустить компьютер", state.online && !state.loading) { confirmReboot = true }; Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.PowerSettingsNew, "Выключить", "Корректно выключить компьютер", state.online && !state.loading, destructive = true) { confirmShutdown = true } }
     }
 }
