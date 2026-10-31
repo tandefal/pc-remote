@@ -7,7 +7,7 @@ plugins {
 android {
     namespace = "dev.pcremote.app"
     compileSdk = 36
-    defaultConfig { applicationId = "dev.pcremote.app"; minSdk = 29; targetSdk = 36; versionCode = providers.gradleProperty("releaseVersionCode").orElse("9").get().toInt(); versionName = providers.gradleProperty("releaseVersion").orElse("1.0.8").get(); testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "dev.pcremote.app"; minSdk = 29; targetSdk = 36; versionCode = providers.gradleProperty("releaseVersionCode").orElse("10").get().toInt(); versionName = providers.gradleProperty("releaseVersion").orElse("1.0.9").get(); testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     signingConfigs {
         create("release") {
             System.getenv("PCREMOTE_KEYSTORE")?.let { storeFile = file(it) }

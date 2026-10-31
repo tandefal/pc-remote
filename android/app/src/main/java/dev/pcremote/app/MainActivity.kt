@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -65,18 +66,39 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun PCRemoteApp(state: UiState, vm: MainViewModel, updates: UpdateViewModel, scan: ((String) -> Unit, (String) -> Unit) -> Unit) {
+    var showMore by remember { mutableStateOf(false) }
+    if (showMore && state.credentials != null) {
+        ModalBottomSheet(onDismissRequest = { showMore = false }) {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text("Ещё", Modifier.padding(horizontal = 24.dp, vertical = 12.dp), style = MaterialTheme.typography.headlineSmall)
+                listOf(
+                    Triple(Page.COMPUTERS, Icons.Outlined.Computer, "Компьютеры"),
+                    Triple(Page.SETTINGS, Icons.Outlined.Settings, "Настройки")
+                ).forEach { (page, icon, label) ->
+                    ListItem(
+                        headlineContent = { Text(label) },
+                        leadingContent = { Icon(icon, null) },
+                        trailingContent = { if (state.page == page) Icon(Icons.Outlined.Check, "Выбрано", tint = MaterialTheme.colorScheme.primary) },
+                        modifier = Modifier.clickable { showMore = false; vm.select(page) },
+                        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                    )
+                }
+            }
+        }
+    }
     Scaffold(bottomBar = {
         NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
             if (state.credentials != null) {
-                NavItem(Page.HOME, state.page, Icons.Outlined.Home, "Главная", vm::select)
-                NavItem(Page.SYSTEM, state.page, Icons.Outlined.MonitorHeart, "Система", vm::select)
-                NavItem(Page.APPS, state.page, Icons.Outlined.Apps, "Приложения", vm::select)
-                NavItem(Page.COMPUTERS, state.page, Icons.Outlined.Computer, "Компьютеры", vm::select)
+                NavItem(state.page == Page.HOME, Icons.Outlined.Home, "Главная") { vm.select(Page.HOME) }
+                NavItem(state.page == Page.SYSTEM, Icons.Outlined.MonitorHeart, "Система") { vm.select(Page.SYSTEM) }
+                NavItem(state.page == Page.APPS, Icons.Outlined.Apps, "Приложения") { vm.select(Page.APPS) }
+                NavItem(state.page == Page.COMPUTERS || state.page == Page.SETTINGS, Icons.Outlined.MoreHoriz, "Ещё") { showMore = true }
             } else {
-                NavItem(Page.CONNECT, state.page, Icons.Outlined.QrCodeScanner, "Подключение", vm::select)
+                NavItem(state.page == Page.CONNECT, Icons.Outlined.QrCodeScanner, "Подключение") { vm.select(Page.CONNECT) }
+                NavItem(state.page == Page.SETTINGS, Icons.Outlined.Settings, "Настройки") { vm.select(Page.SETTINGS) }
             }
-            NavItem(Page.SETTINGS, state.page, Icons.Outlined.Settings, "Настройки", vm::select)
         }
     }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
@@ -121,7 +143,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun RowScope.NavItem(page: Page, selected: Page, icon: ImageVector, label: String, select: (Page) -> Unit) { NavigationBarItem(selected = page == selected, onClick = { select(page) }, icon = { Icon(icon, null) }, label = { Text(label) }, colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer, selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.onSurface, unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant)) }
+@Composable private fun RowScope.NavItem(selected: Boolean, icon: ImageVector, label: String, onClick: () -> Unit) { NavigationBarItem(selected = selected, onClick = onClick, icon = { Icon(icon, null) }, label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }, colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer, selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.onSurface, unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant)) }
 
 @Composable private fun ConnectScreen(state: UiState, scan: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
