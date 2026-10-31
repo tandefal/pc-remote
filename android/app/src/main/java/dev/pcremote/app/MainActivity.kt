@@ -165,6 +165,7 @@ class MainActivity : ComponentActivity() {
             }
             Spacer(Modifier.height(28.dp))
         }
+        item { MonitoringPanel(state); Spacer(Modifier.height(20.dp)) }
         item { ActionCard(Icons.Outlined.Lock, if (state.locked == true) "Компьютер заблокирован" else "Заблокировать", if (state.locked == true) "Сеанс Windows заблокирован" else "Заблокировать текущий сеанс Windows", state.online && !state.loading && state.locked == false, action = vm::lock); Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.RestartAlt, "Перезагрузить", "Перезапустить компьютер", state.online && !state.loading) { confirmReboot = true }; Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.PowerSettingsNew, "Выключить", "Корректно выключить компьютер", state.online && !state.loading, destructive = true) { confirmShutdown = true } }
     }
 }

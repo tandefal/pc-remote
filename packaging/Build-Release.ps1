@@ -1,6 +1,6 @@
 param(
-    [string]$Version = '1.0.5',
-    [int]$VersionCode = 6,
+    [string]$Version = '1.0.7',
+    [int]$VersionCode = 8,
     [ValidateSet('All', 'Windows', 'Android')]
     [string]$Platform = 'All',
     [string]$JdkPath = 'C:\Program Files\Java\jdk-17',

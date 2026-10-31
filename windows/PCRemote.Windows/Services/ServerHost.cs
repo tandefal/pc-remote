@@ -18,6 +18,7 @@ namespace PCRemote.Windows.Services;
 public sealed class ServerHost(SecureStore store, AppSettings settings, PairingService pairing, WindowsAppService apps, CommandService commands) : IAsyncDisposable
 {
     private WebApplication? _app;
+    private readonly SystemMonitor _monitor = new();
     private readonly CancellationTokenSource _saveLifetime = new();
     private Task? _saveLoop;
     private long _seenRevision, _savedRevision;
@@ -121,7 +122,7 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
                     await context.Response.Body.FlushAsync(context.RequestAborted);
                     return;
                 }
-                var data = System.Text.Json.JsonSerializer.Serialize(new { computerId = settings.ComputerId, locked = SessionState.IsLocked(), apps = apps.GetApplications() }, jsonOptions);
+                var data = System.Text.Json.JsonSerializer.Serialize(new { computerId = settings.ComputerId, locked = SessionState.IsLocked(), apps = apps.GetApplications(), monitoring = await Task.Run(_monitor.Sample, context.RequestAborted) }, jsonOptions);
                 if (!TryAuthorize(context, out _)) continue;
                 await context.Response.WriteAsync(data == previous ? ": heartbeat\n\n" : $"data: {data}\n\n", context.RequestAborted);
                 previous = data;
@@ -203,5 +204,5 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
         return ip.IsIPv6LinkLocal || (b[0] & 0xFE) == 0xFC;
     }
     private static Task WriteError(HttpContext c, int status, string code, string message) { c.Response.StatusCode = status; return c.Response.WriteAsJsonAsync(new ApiError(code, message, c.TraceIdentifier)); }
-    public async ValueTask DisposeAsync() { StopAdvertisement(); _saveLifetime.Cancel(); if (_saveLoop is not null) await _saveLoop; if (_app is not null) { await _app.StopAsync(TimeSpan.FromSeconds(5)); await _app.DisposeAsync(); } await FlushSeenAsync(); _saveLifetime.Dispose(); _certificate?.Dispose(); }
+    public async ValueTask DisposeAsync() { StopAdvertisement(); _saveLifetime.Cancel(); if (_saveLoop is not null) await _saveLoop; if (_app is not null) { await _app.StopAsync(TimeSpan.FromSeconds(5)); await _app.DisposeAsync(); } await FlushSeenAsync(); _monitor.Dispose(); _saveLifetime.Dispose(); _certificate?.Dispose(); }
 }

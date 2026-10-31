@@ -8,11 +8,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PCRemote</AssemblyName>
     <RootNamespace>PCRemote.Windows</RootNamespace>
-    <Version>1.0.5</Version>
+    <Version>1.0.7</Version>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Makaretu.Dns.Multicast" Version="0.27.0" />
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>

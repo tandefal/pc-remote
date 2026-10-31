@@ -27,6 +27,9 @@ class IntegrationTest {
                     api.events(credentials) { snapshot ->
                         assertEquals(credentials.id, snapshot.getString("computerId"))
                         assertNotNull(snapshot.getJSONArray("apps"))
+                        val metrics = parseMonitoring(snapshot.getJSONObject("monitoring"))
+                        assertTrue(metrics.cpu.name.isNotBlank())
+                        assertNotNull(metrics.memory)
                         received.complete(Unit)
                     }
                 }
@@ -59,6 +62,8 @@ class IntegrationTest {
                 scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
                 assertFalse(vm.state.value.online)
                 assertTrue(vm.state.value.apps.isEmpty())
+                assertNull(vm.state.value.monitoring)
+                assertTrue(vm.state.value.history.isEmpty())
                 scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
                 awaitOnline()
             }

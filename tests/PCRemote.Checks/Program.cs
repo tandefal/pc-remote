@@ -165,6 +165,18 @@ using var streamReader = new StreamReader(await streamResponse.Content.ReadAsStr
 var firstEvent = await streamReader.ReadLineAsync(streamTimeout.Token);
 using var stateEvent = JsonDocument.Parse(firstEvent![6..]);
 Check(stateEvent.RootElement.GetProperty("computerId").GetString() == settings.ComputerId && stateEvent.RootElement.GetProperty("apps").ValueKind == JsonValueKind.Array, "Initial state snapshot and applications");
+var monitoring = stateEvent.RootElement.GetProperty("monitoring");
+Check(!string.IsNullOrWhiteSpace(monitoring.GetProperty("cpu").GetProperty("name").GetString()), "Monitoring CPU identity");
+Check(monitoring.GetProperty("gpus").EnumerateArray().Select(g => g.GetProperty("id").GetString()).Distinct().Count() == monitoring.GetProperty("gpus").GetArrayLength(), "GPU identities are unique");
+var ram = monitoring.GetProperty("memory");
+Check(ram.GetProperty("total").GetUInt64() == ram.GetProperty("available").GetUInt64() + ram.GetProperty("used").GetUInt64(), "Monitoring physical memory accounting");
+Check(monitoring.GetProperty("uptimeSeconds").GetInt64() > 0, "Monitoring Windows uptime");
+string? nextSample;
+do { nextSample = await streamReader.ReadLineAsync(streamTimeout.Token); } while (nextSample is not null && !nextSample.StartsWith("data: "));
+using var secondState = JsonDocument.Parse(nextSample![6..]);
+var nextMetrics = secondState.RootElement.GetProperty("monitoring");
+Check(nextMetrics.GetProperty("sampledAt").GetDateTimeOffset() > monitoring.GetProperty("sampledAt").GetDateTimeOffset(), "Monitoring samples update over SSE");
+Check(nextMetrics.GetProperty("cpu").GetProperty("load").GetDouble() is >= 0 and <= 100, "Live CPU load is available");
 settings.Devices.Clear(); await store.SaveAsync(settings);
 string? eventLine;
 do { eventLine = await streamReader.ReadLineAsync(streamTimeout.Token); } while (eventLine is not null && eventLine != "event: revoked");

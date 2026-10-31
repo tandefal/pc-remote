@@ -17,7 +17,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
 
-data class UiState(val credentials: ComputerCredentials? = null, val computers: List<ComputerCredentials> = emptyList(), val online: Boolean = false, val connecting: Boolean = false, val loading: Boolean = false, val apps: List<RemoteApp> = emptyList(), val error: String? = null, val notice: String? = null, val locked: Boolean? = null, val page: Page = Page.HOME, val pairing: Boolean = false)
+data class UiState(val monitoring: SystemMetrics? = null, val history: List<MonitoringPoint> = emptyList(), val credentials: ComputerCredentials? = null, val computers: List<ComputerCredentials> = emptyList(), val online: Boolean = false, val connecting: Boolean = false, val loading: Boolean = false, val apps: List<RemoteApp> = emptyList(), val error: String? = null, val notice: String? = null, val locked: Boolean? = null, val page: Page = Page.HOME, val pairing: Boolean = false)
 enum class Page { HOME, APPS, COMPUTERS, CONNECT, SETTINGS }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -33,16 +33,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var monitor: Job? = null
     private var pairingTimeout: Job? = null
     private var active = false
+    private var lastMetricsAt = 0L
+    init {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000)
+                if (_state.value.monitoring != null && android.os.SystemClock.elapsedRealtime() - lastMetricsAt > 6000)
+                    _state.value = _state.value.copy(monitoring = null, history = emptyList())
+            }
+        }
+    }
     private val discovery = DiscoveryManager(application, ::computerFound) { error(it) }
 
     fun startActive() { if (active) return; active = true; discovery.start(); startMonitor() }
-    fun stopActive() { active = false; discovery.stop(); monitor?.cancel(); monitor = null; _state.value = _state.value.copy(online = false, connecting = _state.value.credentials != null, locked = null, apps = emptyList()) }
+    fun stopActive() { active = false; discovery.stop(); monitor?.cancel(); monitor = null; _state.value = _state.value.copy(online = false, connecting = _state.value.credentials != null, locked = null, apps = emptyList(), monitoring = null, history = emptyList()) }
     fun select(page: Page) { _state.value = _state.value.copy(page = page, error = null) }
     fun selectComputer(id: String) {
         if (_state.value.loading || _state.value.pairing || _state.value.credentials?.id == id) return
         val computer = _state.value.computers.firstOrNull { it.id == id } ?: return
         prefs.select(id)
-        _state.value = _state.value.copy(credentials = computer, online = false, apps = emptyList(), error = null, page = Page.HOME)
+        _state.value = _state.value.copy(credentials = computer, online = false, apps = emptyList(), monitoring = null, history = emptyList(), error = null, page = Page.HOME)
         startMonitor()
     }
     fun acceptQr(raw: String) {
@@ -79,7 +89,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun startMonitor() {
         monitor?.cancel()
         if (!active) return
-        _state.value = _state.value.copy(online = false, connecting = _state.value.credentials != null, locked = null, apps = emptyList())
+        _state.value = _state.value.copy(online = false, connecting = _state.value.credentials != null, locked = null, apps = emptyList(), monitoring = null, history = emptyList())
         monitor = viewModelScope.launch {
             var retry = 1000L
             while (isActive) {
@@ -94,14 +104,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val list = (0 until a.length()).map { a.getJSONObject(it).run {
                                 RemoteApp(getString("id"), getString("name"), optString("iconPngBase64").takeIf { v -> v.isNotBlank() && v != "null" }, getInt("windowCount"))
                             } }
-                            _state.value = _state.value.copy(online = true, connecting = false, locked = if (data.isNull("locked")) null else data.getBoolean("locked"), apps = list)
+                            val metrics = data.optJSONObject("monitoring")?.let { runCatching { parseMonitoring(it) }.getOrNull() }
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            lastMetricsAt = now
+                            val history = if (metrics == null) emptyList() else (_state.value.history.filter { now - it.time <= 60_000 } + MonitoringPoint(now, metrics)).takeLast(61)
+                            _state.value = _state.value.copy(monitoring = metrics, history = history, online = true, connecting = false, locked = if (data.isNull("locked")) null else data.getBoolean("locked"), apps = list)
                             retry = 1000L
                         }
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (e: ApiException) { if (e.status == 401 && _state.value.credentials == c) forgetRevoked(c) }
                 catch (_: Exception) { }
-                if (_state.value.credentials == c) _state.value = _state.value.copy(online = false, connecting = false, locked = null, apps = emptyList())
+                if (_state.value.credentials == c) _state.value = _state.value.copy(online = false, connecting = false, locked = null, apps = emptyList(), monitoring = null, history = emptyList())
                 delay(retry)
                 retry = (retry * 2).coerceAtMost(10000L)
             }
