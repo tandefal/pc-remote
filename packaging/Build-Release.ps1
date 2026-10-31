@@ -1,6 +1,6 @@
 param(
-    [string]$Version = '1.0.2',
-    [int]$VersionCode = 3,
+    [string]$Version = '1.0.3',
+    [int]$VersionCode = 4,
     [string]$JdkPath = 'C:\Program Files\Java\jdk-17',
     [string]$InnoCompiler = '',
     [switch]$InitializeSigningKey
