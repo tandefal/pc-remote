@@ -23,7 +23,6 @@ public partial class App : System.Windows.Application
         }
 
         base.OnStartup(e);
-        ThemeService.ApplyCurrent(this);
         _lifetime = new CancellationTokenSource();
         var store = new SecureStore();
         PCRemote.Windows.Models.AppSettings settings;

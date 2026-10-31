@@ -65,7 +65,8 @@ public partial class MainWindow : Window
     private void ShowHome(object s, RoutedEventArgs e) => ShowPanel(HomePanel);
     private void ShowDevices(object s, RoutedEventArgs e) { RefreshDevices(); ShowPanel(DevicesPanel); }
     private void ShowSettings(object s, RoutedEventArgs e) => ShowPanel(SettingsPanel);
-    private void ShowPanel(UIElement panel) { HomePanel.Visibility = DevicesPanel.Visibility = SettingsPanel.Visibility = Visibility.Collapsed; panel.Visibility = Visibility.Visible; }
+    private void OnSourceInitialized(object? sender, EventArgs e) => ThemeService.ApplyWindow(this);
+    private void ShowPanel(UIElement panel) { HomeButton.Tag = panel == HomePanel ? "Selected" : null; DevicesButton.Tag = panel == DevicesPanel ? "Selected" : null; SettingsButton.Tag = panel == SettingsPanel ? "Selected" : null; HomePanel.Visibility = DevicesPanel.Visibility = SettingsPanel.Visibility = Visibility.Collapsed; panel.Visibility = Visibility.Visible; }
     private void RefreshDevices() { lock (_settings) { DevicesList.ItemsSource = null; DevicesList.ItemsSource = _settings.Devices.Select(x => new { x.Id, x.Name, LastSeenDisplay = x.LastSeenUtc is null ? "Ещё не подключалось" : $"Последнее подключение: {x.LastSeenUtc.Value.ToLocalTime():g}" }).ToList(); DeviceCountText.Text = _settings.Devices.Count.ToString(); } }
 
     private void CreatePairing(object s, RoutedEventArgs e)

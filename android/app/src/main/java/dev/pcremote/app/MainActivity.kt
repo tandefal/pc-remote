@@ -6,8 +6,12 @@ import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -41,7 +45,11 @@ class MainActivity : ComponentActivity() {
         scanSuccess = null; scanError = null
     }
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState); enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
             PCRemoteTheme { PCRemoteApp(state, viewModel, updates, ::scanQr) }
@@ -55,14 +63,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun PCRemoteTheme(content: @Composable () -> Unit) {
-    val dark = androidx.compose.foundation.isSystemInDarkTheme()
-    MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = androidx.compose.ui.graphics.Color(0xFFD0BCFF)) else lightColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF6750A4)), content = content)
-}
-
 @Composable private fun PCRemoteApp(state: UiState, vm: MainViewModel, updates: UpdateViewModel, scan: ((String) -> Unit, (String) -> Unit) -> Unit) {
     Scaffold(bottomBar = {
-        NavigationBar {
+        NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 0.dp) {
             if (state.credentials != null) {
                 NavItem(Page.HOME, state.page, Icons.Outlined.Home, "Главная", vm::select)
                 NavItem(Page.APPS, state.page, Icons.Outlined.Apps, "Приложения", vm::select)
@@ -93,7 +96,7 @@ class MainActivity : ComponentActivity() {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(vertical = 24.dp)) {
         item { Text("Настройки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold) }
         item {
-            Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+            RemoteCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary)
@@ -114,12 +117,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun RowScope.NavItem(page: Page, selected: Page, icon: ImageVector, label: String, select: (Page) -> Unit) { NavigationBarItem(selected = page == selected, onClick = { select(page) }, icon = { Icon(icon, null) }, label = { Text(label) }) }
+@Composable private fun RowScope.NavItem(page: Page, selected: Page, icon: ImageVector, label: String, select: (Page) -> Unit) { NavigationBarItem(selected = page == selected, onClick = { select(page) }, icon = { Icon(icon, null) }, label = { Text(label) }, colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer, selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.onSurface, unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant)) }
 
 @Composable private fun ConnectScreen(state: UiState, scan: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.primaryContainer) { Icon(Icons.Outlined.QrCodeScanner, null, Modifier.padding(24.dp).size(56.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer) }
-        Spacer(Modifier.height(28.dp)); Text("Подключение к компьютеру", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(24.dp)); Text("PC Remote", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(12.dp)); Text("Подключение к компьютеру", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(12.dp)); Text("На компьютере откройте «Устройства», нажмите «Добавить телефон» и отсканируйте QR-код.", textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(28.dp)); Button(onClick = scan, enabled = !state.pairing, modifier = Modifier.fillMaxWidth().height(54.dp)) { Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(10.dp)); Text(if (state.pairing) "Поиск компьютера…" else "Сканировать QR-код") }
         if (state.pairing) { Spacer(Modifier.height(16.dp)); CircularProgressIndicator() }
@@ -132,8 +135,25 @@ class MainActivity : ComponentActivity() {
     if (confirmShutdown) Confirm("Выключить компьютер?", "Все несохранённые данные могут быть потеряны.", { confirmShutdown = false; vm.shutdown() }, { confirmShutdown = false })
     if (confirmReboot) Confirm("Перезагрузить компьютер?", "Сохраните данные в открытых приложениях перед перезагрузкой.", { confirmReboot = false; vm.reboot() }, { confirmReboot = false })
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 28.dp, bottom = 24.dp)) {
-        item { Text(state.credentials?.name ?: "Компьютер", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold); Spacer(Modifier.height(8.dp)); AssistChip(onClick = {}, label = { Text(if (state.online) "В сети" else "Нет соединения") }, leadingIcon = { Icon(if (state.online) Icons.Outlined.CheckCircle else Icons.Outlined.CloudOff, null) }); Spacer(Modifier.height(28.dp)) }
-        item { ActionCard(Icons.Outlined.Lock, if (state.locked == true) "Компьютер заблокирован" else "Заблокировать", if (state.locked == true) "Сеанс Windows заблокирован" else "Заблокировать текущий сеанс Windows", state.online && !state.loading && state.locked == false, vm::lock); Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.RestartAlt, "Перезагрузить", "Перезапустить компьютер", state.online && !state.loading) { confirmReboot = true }; Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.PowerSettingsNew, "Выключить", "Корректно выключить компьютер", state.online && !state.loading) { confirmShutdown = true } }
+        item {
+            Text("Главная", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            RemoteCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Icon(Icons.Outlined.Computer, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+                    Text(state.credentials?.name ?: "Компьютер", style = MaterialTheme.typography.headlineMedium)
+                    val statusColor = if (state.online) RemoteSuccess else MaterialTheme.colorScheme.onSurfaceVariant
+                    Surface(color = statusColor.copy(alpha = 0.10f), shape = RoundedCornerShape(8.dp)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(if (state.online) Icons.Outlined.CheckCircle else Icons.Outlined.CloudOff, null, Modifier.size(18.dp), tint = statusColor)
+                            Text(if (state.online) "В сети" else "Нет соединения", color = statusColor, style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(28.dp))
+        }
+        item { ActionCard(Icons.Outlined.Lock, if (state.locked == true) "Компьютер заблокирован" else "Заблокировать", if (state.locked == true) "Сеанс Windows заблокирован" else "Заблокировать текущий сеанс Windows", state.online && !state.loading && state.locked == false, action = vm::lock); Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.RestartAlt, "Перезагрузить", "Перезапустить компьютер", state.online && !state.loading) { confirmReboot = true }; Spacer(Modifier.height(16.dp)); ActionCard(Icons.Outlined.PowerSettingsNew, "Выключить", "Корректно выключить компьютер", state.online && !state.loading, destructive = true) { confirmShutdown = true } }
     }
 }
 
@@ -146,7 +166,7 @@ class MainActivity : ComponentActivity() {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(state.computers, key = { it.id }) { computer ->
                 val selected = state.credentials?.id == computer.id
-                Card(onClick = { vm.selectComputer(computer.id) }, enabled = !selected && !state.loading, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                Card(onClick = { vm.selectComputer(computer.id) }, enabled = !selected && !state.loading, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface, disabledContainerColor = MaterialTheme.colorScheme.primaryContainer, disabledContentColor = MaterialTheme.colorScheme.onSurface)) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Computer, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(14.dp))
@@ -162,7 +182,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable private fun ActionCard(icon: ImageVector, title: String, subtitle: String, enabled: Boolean, action: () -> Unit) { Card(onClick = action, enabled = enabled, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) { Row(Modifier.padding(22.dp), verticalAlignment = Alignment.CenterVertically) { Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer) { Icon(icon, null, Modifier.padding(16.dp).size(30.dp)) }; Spacer(Modifier.width(18.dp)); Column { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold); Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } }
+@Composable private fun ActionCard(icon: ImageVector, title: String, subtitle: String, enabled: Boolean, destructive: Boolean = false, action: () -> Unit) {
+    val accent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Card(onClick = action, enabled = enabled, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface,
+            disabledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Surface(shape = RoundedCornerShape(14.dp), color = accent.copy(alpha = if (enabled) 0.12f else 0.05f)) {
+                Icon(icon, null, Modifier.padding(13.dp).size(26.dp), tint = accent.copy(alpha = if (enabled) 1f else 0.4f))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.5f))
+            }
+        }
+    }
+}
 
 @Composable private fun AppsScreen(state: UiState, vm: MainViewModel) {
     var exit by remember { mutableStateOf<RemoteApp?>(null) }; var terminate by remember { mutableStateOf<RemoteApp?>(null) }; var all by remember { mutableStateOf(false) }
@@ -173,11 +209,36 @@ class MainActivity : ComponentActivity() {
         Row(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text("Приложения", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refreshApps, enabled = state.online && !state.loading) { Icon(Icons.Outlined.Refresh, "Обновить") } }
         if (!state.online) EmptyState(Icons.Outlined.CloudOff, "Соединение не установлено", "Список появится автоматически после подключения.")
         else if (!state.loading && state.apps.isEmpty()) EmptyState(Icons.Outlined.Apps, "Нет открытых приложений", "Откройте приложение на компьютере — список обновится автоматически.")
-        else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(state.apps, key = { it.id }) { app -> AppRow(app, { exit = app }, { terminate = app }) }; item { Spacer(Modifier.height(8.dp)); OutlinedButton(onClick = { all = true }, enabled = state.apps.isNotEmpty() && !state.loading, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Close, null); Spacer(Modifier.width(8.dp)); Text("Завершить все принудительно") }; Spacer(Modifier.height(20.dp)) } }
+        else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(state.apps, key = { it.id }) { app -> AppRow(app, { exit = app }, { terminate = app }) }; item { Spacer(Modifier.height(8.dp)); OutlinedButton(colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), onClick = { all = true }, enabled = state.apps.isNotEmpty() && !state.loading, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Close, null); Spacer(Modifier.width(8.dp)); Text("Завершить все принудительно") }; Spacer(Modifier.height(20.dp)) } }
     }
 }
 
-@Composable private fun AppRow(app: RemoteApp, exit: () -> Unit, terminate: () -> Unit) { Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) { val bitmap = remember(app.iconPngBase64) { runCatching { val bytes = Base64.decode(app.iconPngBase64, Base64.DEFAULT); BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }.getOrNull() }; if (bitmap != null) Image(bitmap, null, Modifier.size(44.dp)) else Icon(Icons.Outlined.Window, null, Modifier.size(44.dp)); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(app.name, fontWeight = FontWeight.Medium); Text(if (app.windowCount == 0) "В трее" else "Окон: ${app.windowCount}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; TextButton(onClick = exit) { Text("Выйти") }; IconButton(onClick = terminate) { Icon(Icons.Outlined.Close, "Завершить принудительно") } } } }
+@Composable private fun AppRow(app: RemoteApp, exit: () -> Unit, terminate: () -> Unit) {
+    RemoteCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                val bitmap = remember(app.iconPngBase64) { runCatching {
+                    val bytes = Base64.decode(app.iconPngBase64, Base64.DEFAULT)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                }.getOrNull() }
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Box(Modifier.padding(10.dp)) {
+                        if (bitmap != null) Image(bitmap, null, Modifier.size(32.dp))
+                        else Icon(Icons.Outlined.Window, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(app.name, style = MaterialTheme.typography.titleMedium)
+                    Text(if (app.windowCount == 0) "В трее" else "Окон: ${app.windowCount}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = exit) { Text("Выйти") }
+                IconButton(onClick = terminate) { Icon(Icons.Outlined.Close, "Завершить принудительно", tint = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+}
 @Composable private fun MessageBanner(message: String, error: Boolean, dismiss: () -> Unit, modifier: Modifier = Modifier) { val container = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer; val content = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer; Surface(modifier.padding(16.dp), color = container, shape = RoundedCornerShape(12.dp), shadowElevation = 4.dp) { Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) { Text(message, Modifier.weight(1f), color = content); IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, if (error) "Закрыть ошибку" else "Закрыть сообщение", tint = content) } } } }
 @Composable private fun EmptyState(icon: ImageVector, title: String, subtitle: String) { Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Icon(icon, null, Modifier.size(54.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleLarge); Text(subtitle, Modifier.padding(top = 6.dp, start = 24.dp, end = 24.dp), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
 @Composable private fun Confirm(title: String, text: String, yes: () -> Unit, no: () -> Unit) { AlertDialog(onDismissRequest = no, title = { Text(title) }, text = { Text(text) }, confirmButton = { Button(onClick = yes) { Text("Продолжить") } }, dismissButton = { TextButton(onClick = no) { Text("Отмена") } }) }

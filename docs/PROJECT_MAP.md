@@ -22,6 +22,7 @@ windows/PCRemote.Windows/
   PCRemote.Windows.csproj                  WPF WinExe + ASP.NET Core
   App.xaml(.cs)                            запуск, mutex, IPC, жизненный цикл
   MainWindow.xaml(.cs)                     главная, устройства, настройки
+  Styles/Controls.xaml                     общая тёмная палитра и шаблоны WPF
   Models/Contracts.cs                      настройки и API-модели
   Services/                                сеть, безопасность и Win32
 android/
@@ -42,10 +43,11 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 ## Windows
 
 - `App.xaml.cs` — единственный экземпляр через mutex; named pipe активирует существующее окно; управляет сервером и треем.
-- `MainWindow.xaml(.cs)` — русский адаптивный интерфейс с glyph-иконками Segoe MDL2 Assets, системная светлая/тёмная тема, QR и управление устройствами.
+- `MainWindow.xaml(.cs)` — русский адаптивный интерфейс с glyph-иконками Segoe MDL2 Assets, единая тёмная тема, выделение текущего экрана, QR и управление устройствами.
 - `Services/TrayService.cs` — значок, двойной клик, «Открыть» и «Выход».
 - `Services/AutoStartService.cs` — HKCU Run без повышения прав; по умолчанию выключен, включается пользователем.
-- `Services/ThemeService.cs` — системная тема Windows.
+- `Styles/Controls.xaml` — палитра, карточки, кнопки, навигация, поле ввода и переключатель.
+- `Services/ThemeService.cs` — тёмный нативный заголовок Windows с системными кнопками.
 - `Services/UpdateService.cs` — ручная проверка последнего стабильного GitHub Release, скачивание установщика с проверкой размера/SHA-256; окно запускает установщик и корректно завершает приложение.
 - `Services/ServerHost.cs` — Kestrel HTTPS, Minimal API, локальная адресная проверка и проверка интерфейса назначения Ethernet/Wi-Fi, лимит тела 16 КиБ и 120 запросов в минуту на адрес, bearer-фильтр, отложенное сохранение LastSeen раз в 60 секунд и при выходе, DNS-SD только с адресами частных IPv4-адаптеров Ethernet/Wi-Fi с локальным шлюзом.
 - `Services/CertificateService.cs` — локальный RSA-сертификат и SHA-256 fingerprint.
@@ -59,6 +61,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 
 ## Android
 
+- `PCRemoteTheme.kt` — общая тёмная палитра Android, типографика, формы и карточки, согласованные с Windows.
 - `MainActivity.kt` — Material 3 UI: подключение, главная, приложения, выбор компьютера и настройки в нижней навигации; закрываемые сообщения об ошибках и результате, подтверждения блокировки, перезагрузки, выключения, выхода и принудительного завершения приложений; встроенный ZXing QR scanner.
 - `UpdateViewModel.kt` — отдельное состояние обновлений в разделе «Настройки» (доступен до сопряжения), GitHub Releases, проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
 - `MainViewModel.kt` — StateFlow, поток SSE выбранного компьютера только при активной Activity, переподключение с задержкой 1–10 секунд, многокомпьютерное сопряжение/переключение и синхронизация списка приложений из потока.
@@ -90,7 +93,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 | Задача | Файлы или модули |
 |---|---|
 | Интерфейс Windows | `windows/PCRemote.Windows/MainWindow.xaml`, `windows/PCRemote.Windows/MainWindow.xaml.cs`, `windows/PCRemote.Windows/Services/ThemeService.cs` |
-| Интерфейс Android | `android/app/src/main/java/dev/pcremote/app/MainActivity.kt`, `android/app/src/main/java/dev/pcremote/app/MainViewModel.kt` |
+| Интерфейс Android | `android/app/src/main/java/dev/pcremote/app/MainActivity.kt`, `android/app/src/main/java/dev/pcremote/app/PCRemoteTheme.kt`, `android/app/src/main/java/dev/pcremote/app/MainViewModel.kt` |
 | Работа с процессами | `windows/PCRemote.Windows/Services/WindowsAppService.cs`, `windows/PCRemote.Windows/Services/CommandService.cs` |
 | Авторизация | `windows/PCRemote.Windows/Services/PairingService.cs`, `windows/PCRemote.Windows/Services/SecureStore.cs`, Android `data/ApiClient.kt` и `data/SecurePreferences.kt` |
 | HTTP API | `windows/PCRemote.Windows/Services/ServerHost.cs`, `windows/PCRemote.Windows/Models/Contracts.cs`, Android `data/ApiClient.kt` |
