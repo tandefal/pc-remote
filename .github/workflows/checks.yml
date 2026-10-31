@@ -21,5 +21,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
       - run: bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
         working-directory: android
