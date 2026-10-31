@@ -27,7 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import dev.pcremote.app.data.ComputerCredentials
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.journeyapps.barcodescanner.ScanContract
@@ -79,8 +81,8 @@ class MainActivity : ComponentActivity() {
         Box(Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)) {
             when (state.page) {
                 Page.CONNECT -> ConnectScreen(state, { scan(vm::acceptQr, vm::reportError) })
-                Page.HOME -> HomeScreen(state, vm)
-                Page.APPS -> AppsScreen(state, vm)
+                Page.HOME -> if (state.connecting) ConnectingScreen(state) else HomeScreen(state, vm)
+                Page.APPS -> if (state.connecting) ConnectingScreen(state) else AppsScreen(state, vm)
                 Page.COMPUTERS -> ComputersScreen(state, vm) { scan(vm::acceptQr, vm::reportError) }
                 Page.SETTINGS -> SettingsScreen(updates)
             }
@@ -129,6 +131,16 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable private fun ConnectingScreen(state: UiState) {
+    Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        CircularProgressIndicator()
+        Spacer(Modifier.height(24.dp))
+        Text("Подключение…", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(12.dp))
+        Text(state.credentials?.name.orEmpty(), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
 @Composable private fun HomeScreen(state: UiState, vm: MainViewModel) {
     var confirmShutdown by remember { mutableStateOf(false) }
     var confirmReboot by remember { mutableStateOf(false) }
@@ -158,6 +170,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun ComputersScreen(state: UiState, vm: MainViewModel, scan: () -> Unit) {
+    var removing by remember { mutableStateOf<ComputerCredentials?>(null) }
+    removing?.let { computer ->
+        Confirm("Удалить сопряжение с «${computer.name}»?", "Компьютер будет удалён с телефона. Для подключения понадобится новый QR-код. Запись телефона на ПК можно удалить в разделе «Устройства».",
+            { removing = null; vm.removeComputer(computer.id) }, { removing = null })
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Text("Компьютеры", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 24.dp, bottom = 8.dp))
         Text("Выберите компьютер для управления или добавьте ещё один.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 16.dp))
@@ -166,7 +183,7 @@ class MainActivity : ComponentActivity() {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(state.computers, key = { it.id }) { computer ->
                 val selected = state.credentials?.id == computer.id
-                Card(onClick = { vm.selectComputer(computer.id) }, enabled = !selected && !state.loading, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface, disabledContainerColor = MaterialTheme.colorScheme.primaryContainer, disabledContentColor = MaterialTheme.colorScheme.onSurface)) {
+                Card(onClick = { vm.selectComputer(computer.id) }, enabled = !state.loading && !state.pairing, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface, disabledContainerColor = MaterialTheme.colorScheme.primaryContainer, disabledContentColor = MaterialTheme.colorScheme.onSurface)) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Computer, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(14.dp))
@@ -175,6 +192,9 @@ class MainActivity : ComponentActivity() {
                             Text(if (selected) "Выбран · ${if (state.online) "в сети" else "проверка соединения…"}" else "Нажмите, чтобы переключиться", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (selected) Icon(Icons.Outlined.CheckCircle, "Выбран", tint = MaterialTheme.colorScheme.primary)
+                        IconButton(onClick = { removing = computer }, enabled = !state.loading && !state.pairing) {
+                            Icon(Icons.Outlined.DeleteOutline, "Удалить сопряжение", tint = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
@@ -201,19 +221,18 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun AppsScreen(state: UiState, vm: MainViewModel) {
-    var exit by remember { mutableStateOf<RemoteApp?>(null) }; var terminate by remember { mutableStateOf<RemoteApp?>(null) }; var all by remember { mutableStateOf(false) }
-    exit?.let { app -> Confirm("Выйти из ${app.name}?", "Приложению будет отправлен обычный запрос на выход, чтобы оно могло сохранить данные.", { exit = null; vm.exit(app.id) }, { exit = null }) }
+    var terminate by remember { mutableStateOf<RemoteApp?>(null) }; var all by remember { mutableStateOf(false) }
     terminate?.let { app -> Confirm("Завершить ${app.name} принудительно?", "Несохранённые данные будут потеряны.", { terminate = null; vm.terminate(app.id) }, { terminate = null }) }
     if (all) Confirm("Завершить все приложения принудительно?", "Все несохранённые данные во всех доступных приложениях будут потеряны.", { all = false; vm.terminateAll() }, { all = false })
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text("Приложения", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)); IconButton(onClick = vm::refreshApps, enabled = state.online && !state.loading) { Icon(Icons.Outlined.Refresh, "Обновить") } }
+        Row(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text("Приложения", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)) }
         if (!state.online) EmptyState(Icons.Outlined.CloudOff, "Соединение не установлено", "Список появится автоматически после подключения.")
-        else if (!state.loading && state.apps.isEmpty()) EmptyState(Icons.Outlined.Apps, "Нет открытых приложений", "Откройте приложение на компьютере — список обновится автоматически.")
-        else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(state.apps, key = { it.id }) { app -> AppRow(app, { exit = app }, { terminate = app }) }; item { Spacer(Modifier.height(8.dp)); OutlinedButton(colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), onClick = { all = true }, enabled = state.apps.isNotEmpty() && !state.loading, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Close, null); Spacer(Modifier.width(8.dp)); Text("Завершить все принудительно") }; Spacer(Modifier.height(20.dp)) } }
+        else if (state.apps.isEmpty()) EmptyState(Icons.Outlined.Apps, "Нет открытых приложений", "Откройте приложение на компьютере — список обновится автоматически.")
+        else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(state.apps, key = { it.id }) { app -> AppRow(app, !state.loading) { terminate = app } }; item { Spacer(Modifier.height(8.dp)); OutlinedButton(colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), onClick = { all = true }, enabled = state.apps.isNotEmpty() && !state.loading, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Close, null); Spacer(Modifier.width(8.dp)); Text("Завершить все принудительно") }; Spacer(Modifier.height(20.dp)) } }
     }
 }
 
-@Composable private fun AppRow(app: RemoteApp, exit: () -> Unit, terminate: () -> Unit) {
+@Composable private fun AppRow(app: RemoteApp, enabled: Boolean, terminate: () -> Unit) {
     RemoteCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -228,13 +247,16 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(app.name, style = MaterialTheme.typography.titleMedium)
+                    Text(app.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(if (app.windowCount == 0) "В трее" else "Окон: ${app.windowCount}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = exit) { Text("Выйти") }
-                IconButton(onClick = terminate) { Icon(Icons.Outlined.Close, "Завершить принудительно", tint = MaterialTheme.colorScheme.error) }
+            OutlinedButton(onClick = terminate, enabled = enabled,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Icon(Icons.Outlined.Close, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Завершить принудительно", textAlign = TextAlign.Center)
             }
         }
     }

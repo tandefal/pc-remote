@@ -16,7 +16,7 @@ Android UI → ViewModel → NSD / HTTPS API → WPF-процесс → пров
 AGENTS.md                                  постоянные правила Codex
 README.md                                  сборка, установка и использование
 docs/PROJECT_MAP.md                        эта карта
-packaging/Build-Release.ps1                сборка релиза, постоянная Android-подпись, SHA-256
+packaging/Build-Release.ps1                сборка All/Windows/Android, постоянная Android-подпись, SHA-256
 packaging/windows/PCRemote.iss             установщик Windows с выбором папки
 windows/PCRemote.Windows/
   PCRemote.Windows.csproj                  WPF WinExe + ASP.NET Core
@@ -48,7 +48,7 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 - `Services/AutoStartService.cs` — HKCU Run без повышения прав; по умолчанию выключен, включается пользователем.
 - `Styles/Controls.xaml` — палитра, карточки, кнопки, навигация, поле ввода и переключатель.
 - `Services/ThemeService.cs` — тёмный нативный заголовок Windows с системными кнопками.
-- `Services/UpdateService.cs` — ручная проверка последнего стабильного GitHub Release, скачивание установщика с проверкой размера/SHA-256; окно запускает установщик и корректно завершает приложение.
+- `Services/UpdateService.cs` — ручная проверка последнего стабильного GitHub Release с Windows-установщиком по версии в имени файла, скачивание установщика с проверкой размера/SHA-256; окно запускает установщик и корректно завершает приложение.
 - `Services/ServerHost.cs` — Kestrel HTTPS, Minimal API, локальная адресная проверка и проверка интерфейса назначения Ethernet/Wi-Fi, лимит тела 16 КиБ и 120 запросов в минуту на адрес, bearer-фильтр, отложенное сохранение LastSeen раз в 60 секунд и при выходе, DNS-SD только с адресами частных IPv4-адаптеров Ethernet/Wi-Fi с локальным шлюзом.
 - `Services/CertificateService.cs` — локальный RSA-сертификат и SHA-256 fingerprint.
 - `Services/PairingService.cs` — трёхминутный одноразовый секрет, лимит попыток, уникальный device token.
@@ -62,8 +62,8 @@ Windows сохраняет зашифрованный DPAPI JSON в `%LocalAppDa
 ## Android
 
 - `PCRemoteTheme.kt` — общая тёмная палитра Android, типографика, формы и карточки, согласованные с Windows.
-- `MainActivity.kt` — Material 3 UI: подключение, главная, приложения, выбор компьютера и настройки в нижней навигации; закрываемые сообщения об ошибках и результате, подтверждения блокировки, перезагрузки, выключения, выхода и принудительного завершения приложений; встроенный ZXing QR scanner.
-- `UpdateViewModel.kt` — отдельное состояние обновлений в разделе «Настройки» (доступен до сопряжения), GitHub Releases, проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
+- `MainActivity.kt` — Material 3 UI: подключение, главная, приложения, выбор компьютера и настройки в нижней навигации; закрываемые сообщения об ошибках и результате, экран ожидания подключения, удаление локального сопряжения с подтверждением, подтверждения блокировки, перезагрузки, выключения и принудительного завершения приложений; список приложений обновляется только через SSE, без кнопки обновления; встроенный ZXing QR scanner.
+- `UpdateViewModel.kt` — отдельное состояние обновлений в разделе «Настройки» (доступен до сопряжения), GitHub Releases с поиском последнего стабильного релиза с APK по версии в имени файла (релизы только Windows пропускаются), проверка размера/SHA-256/Android-подписи и системная установка APK. `res/xml/update_paths.xml` ограничивает FileProvider каталогом обновлений в cache.
 - `MainViewModel.kt` — StateFlow, поток SSE выбранного компьютера только при активной Activity, переподключение с задержкой 1–10 секунд, многокомпьютерное сопряжение/переключение и синхронизация списка приложений из потока.
 - `data/DiscoveryManager.kt` — Android NSD `_pcremote._tcp`, очередь разрешения с отдельными ResolveListener и отсечением устаревших callbacks, активный MulticastLock для Android 10–12, обновление IP только после совпадения computer id; mDNS не считается доказательством идентичности.
 - `data/ApiClient.kt` — отменяемый поток SSE с TLS pinning, таймаутом чтения и проверкой computer id; HTTPS с SHA-256 certificate pin, ограниченный кэш TLS socket factory по отпечатку, запрет redirects к ПК, таймауты, bearer token и request id.

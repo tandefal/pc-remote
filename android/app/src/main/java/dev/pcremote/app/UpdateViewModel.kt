@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -42,27 +43,43 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 val release = withContext(Dispatchers.IO) {
-                    val c = connection("https://api.github.com/repos/tandefal/pc-remote/releases/latest")
-                    try {
-                        if (c.responseCode == 404) return@withContext null
-                        check(c.responseCode == 200)
-                        val json = c.inputStream.bufferedReader().use { JSONObject(it.readText()) }
-                        val tag = json.getString("tag_name")
-                        val parts = tag.removePrefix("v").split('.').map { it.toInt() }
-                        require(parts.size == 3)
-                        val current = BuildConfig.VERSION_NAME.split('.').map { it.toInt() }
-                        val different = parts.zip(current).firstOrNull { it.first != it.second }
-                        if (different == null || different.first < different.second) return@withContext null
-                        val assets = json.getJSONArray("assets")
-                        val name = "PCRemote-Android-${tag.removePrefix("v")}.apk"
-                        val asset = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.getString("name") == name }
-                            ?: error("APK ещё не опубликован в релизе.")
-                        val digest = asset.getString("digest")
-                        val url = asset.getString("browser_download_url")
-                        val size = asset.getLong("size")
-                        require(digest.matches(Regex("sha256:[a-fA-F0-9]{64}")) && size in 1..104857600 && url.startsWith("https://github.com/tandefal/pc-remote/releases/download/"))
-                        AppUpdate(tag, json.optString("body"), url, digest.removePrefix("sha256:"), size)
-                    } finally { c.disconnect() }
+                    var page = 1
+                    var found: AppUpdate? = null
+                    while (true) {
+                        val c = connection("https://api.github.com/repos/tandefal/pc-remote/releases?per_page=100&page=$page")
+                        val releases = try {
+                            if (c.responseCode == 404) break
+                            check(c.responseCode == 200)
+                            c.inputStream.bufferedReader().use { JSONArray(it.readText()) }
+                        } finally { c.disconnect() }
+                        var platformFound = false
+                        for (i in 0 until releases.length()) {
+                            val json = releases.getJSONObject(i)
+                            if (json.getBoolean("draft") || json.getBoolean("prerelease")) continue
+                            val assets = json.getJSONArray("assets")
+                            for (j in 0 until assets.length()) {
+                                val asset = assets.getJSONObject(j)
+                                val match = Regex("^PCRemote-Android-(\\d+\\.\\d+\\.\\d+)\\.apk$").matchEntire(asset.getString("name")) ?: continue
+                                platformFound = true
+                                val version = match.groupValues[1]
+                                val parts = version.split('.').map { it.toInt() }
+                                val current = BuildConfig.VERSION_NAME.split('.').map { it.toInt() }
+                                val different = parts.zip(current).firstOrNull { it.first != it.second }
+                                if (different != null && different.first > different.second) {
+                                    val digest = asset.getString("digest")
+                                    val url = asset.getString("browser_download_url")
+                                    val size = asset.getLong("size")
+                                    require(digest.matches(Regex("sha256:[a-fA-F0-9]{64}")) && size in 1..104857600 && url.startsWith("https://github.com/tandefal/pc-remote/releases/download/"))
+                                    found = AppUpdate(version, json.optString("body"), url, digest.removePrefix("sha256:"), size)
+                                }
+                                break
+                            }
+                            if (platformFound) break
+                        }
+                        if (platformFound || releases.length() < 100) break
+                        page++
+                    }
+                    found
                 }
                 mutable.value = UpdateState(release = release, message = if (release == null) "Установлена последняя опубликованная версия." else "Доступна версия ${release.version}")
             } catch (e: CancellationException) { throw e }

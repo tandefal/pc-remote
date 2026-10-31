@@ -21,26 +21,31 @@ public static class UpdateService
 
     public static async Task<ReleaseUpdate?> CheckAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await Client.GetAsync("https://api.github.com/repos/tandefal/pc-remote/releases/latest", cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        var root = json.RootElement;
-        var tag = root.GetProperty("tag_name").GetString()!;
-        if (!Version.TryParse(tag.TrimStart('v'), out var version) || version <= Version.Parse(CurrentVersion)) return null;
-        var name = $"PCRemote-Windows-{version.ToString(3)}-Setup.exe";
-        foreach (var asset in root.GetProperty("assets").EnumerateArray())
+        for (var page = 1; ; page++)
         {
-            if (asset.GetProperty("name").GetString() != name) continue;
-            var digest = asset.GetProperty("digest").GetString() ?? "";
-            var url = asset.GetProperty("browser_download_url").GetString() ?? "";
-            var size = asset.GetProperty("size").GetInt64();
-            if (!digest.StartsWith("sha256:") || digest.Length != 71 || size is <= 0 or > 314572800 ||
-                !url.StartsWith("https://github.com/tandefal/pc-remote/releases/download/", StringComparison.Ordinal))
-                throw new InvalidDataException("У релиза нет корректного файла обновления или контрольной суммы.");
-            return new(tag, root.GetProperty("body").GetString() ?? "", url, digest[7..], size);
+            using var response = await Client.GetAsync($"https://api.github.com/repos/tandefal/pc-remote/releases?per_page=100&page={page}", cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotFound) return null;
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            foreach (var release in json.RootElement.EnumerateArray())
+            {
+                if (release.GetProperty("draft").GetBoolean() || release.GetProperty("prerelease").GetBoolean()) continue;
+                foreach (var asset in release.GetProperty("assets").EnumerateArray())
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(asset.GetProperty("name").GetString() ?? "", @"^PCRemote-Windows-(\d+\.\d+\.\d+)-Setup\.exe$");
+                    if (!match.Success || !Version.TryParse(match.Groups[1].Value, out var version)) continue;
+                    if (version <= Version.Parse(CurrentVersion)) return null;
+                    var digest = asset.GetProperty("digest").GetString() ?? "";
+                    var url = asset.GetProperty("browser_download_url").GetString() ?? "";
+                    var size = asset.GetProperty("size").GetInt64();
+                    if (!digest.StartsWith("sha256:") || digest.Length != 71 || !digest[7..].All(Uri.IsHexDigit) || size is <= 0 or > 314572800 ||
+                        !url.StartsWith("https://github.com/tandefal/pc-remote/releases/download/", StringComparison.Ordinal))
+                        throw new InvalidDataException("У релиза нет корректного файла обновления или контрольной суммы.");
+                    return new(version.ToString(3), release.GetProperty("body").GetString() ?? "", url, digest[7..], size);
+                }
+            }
+            if (json.RootElement.GetArrayLength() < 100) return null;
         }
-        throw new InvalidDataException("Установщик Windows ещё не опубликован в релизе.");
     }
 
     public static async Task<string> DownloadAsync(ReleaseUpdate update, CancellationToken cancellationToken = default)
