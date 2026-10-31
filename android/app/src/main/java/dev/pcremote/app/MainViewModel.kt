@@ -128,7 +128,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun reboot() = command("/api/v1/commands/reboot")
     fun shutdown() = command("/api/v1/commands/shutdown")
     fun terminate(id: String) = command("/api/v1/apps/$id/terminate")
-    fun terminateAll() = command("/api/v1/apps/terminate-all")
     private fun command(path: String) {
         if (!_state.value.online) return
         val c = _state.value.credentials ?: return

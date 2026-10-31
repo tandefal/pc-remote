@@ -221,42 +221,43 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun AppsScreen(state: UiState, vm: MainViewModel) {
-    var terminate by remember { mutableStateOf<RemoteApp?>(null) }; var all by remember { mutableStateOf(false) }
+    var terminate by remember { mutableStateOf<RemoteApp?>(null) }
     terminate?.let { app -> Confirm("Завершить ${app.name} принудительно?", "Несохранённые данные будут потеряны.", { terminate = null; vm.terminate(app.id) }, { terminate = null }) }
-    if (all) Confirm("Завершить все приложения принудительно?", "Все несохранённые данные во всех доступных приложениях будут потеряны.", { all = false; vm.terminateAll() }, { all = false })
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) { Text("Приложения", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f)) }
         if (!state.online) EmptyState(Icons.Outlined.CloudOff, "Соединение не установлено", "Список появится автоматически после подключения.")
         else if (state.apps.isEmpty()) EmptyState(Icons.Outlined.Apps, "Нет открытых приложений", "Откройте приложение на компьютере — список обновится автоматически.")
-        else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(state.apps, key = { it.id }) { app -> AppRow(app, !state.loading) { terminate = app } }; item { Spacer(Modifier.height(8.dp)); OutlinedButton(colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), onClick = { all = true }, enabled = state.apps.isNotEmpty() && !state.loading, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Close, null); Spacer(Modifier.width(8.dp)); Text("Завершить все принудительно") }; Spacer(Modifier.height(20.dp)) } }
+        else LazyColumn(
+            Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 20.dp)
+        ) {
+            items(state.apps, key = { it.id }) { app ->
+                AppRow(app, !state.loading) { terminate = app }
+            }
+        }
     }
 }
 
 @Composable private fun AppRow(app: RemoteApp, enabled: Boolean, terminate: () -> Unit) {
     RemoteCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                val bitmap = remember(app.iconPngBase64) { runCatching {
-                    val bytes = Base64.decode(app.iconPngBase64, Base64.DEFAULT)
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-                }.getOrNull() }
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Box(Modifier.padding(10.dp)) {
-                        if (bitmap != null) Image(bitmap, null, Modifier.size(32.dp))
-                        else Icon(Icons.Outlined.Window, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
-                    }
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(app.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(if (app.windowCount == 0) "В трее" else "Окон: ${app.windowCount}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            val bitmap = remember(app.iconPngBase64) { runCatching {
+                val bytes = Base64.decode(app.iconPngBase64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+            }.getOrNull() }
+            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Box(Modifier.padding(10.dp)) {
+                    if (bitmap != null) Image(bitmap, null, Modifier.size(32.dp))
+                    else Icon(Icons.Outlined.Window, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
-            OutlinedButton(onClick = terminate, enabled = enabled,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-                Icon(Icons.Outlined.Close, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Завершить принудительно", textAlign = TextAlign.Center)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(app.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(if (app.windowCount == 0) "В трее" else "Окон: ${app.windowCount}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = terminate, enabled = enabled) {
+                Icon(Icons.Outlined.Close, "Завершить ${app.name} принудительно", tint = if (enabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
             }
         }
     }
