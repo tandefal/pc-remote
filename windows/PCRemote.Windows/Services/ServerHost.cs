@@ -144,7 +144,7 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
         }
         catch { _discovery?.Dispose(); _discovery = null; }
     }
-    private static IEnumerable<IPAddress> GetAdvertisedAddresses()
+    internal static IEnumerable<IPAddress> GetAdvertisedAddresses()
     {
         return NetworkInterface.GetAllNetworkInterfaces()
             .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up && adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)

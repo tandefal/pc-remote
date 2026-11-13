@@ -16,7 +16,8 @@ public sealed class PairingService(SecureStore store, AppSettings settings)
         {
             _secret = SecureStore.RandomSecret();
             _expires = DateTimeOffset.UtcNow.AddMinutes(3);
-            var payload = JsonSerializer.Serialize(new { v = 1, id = settings.ComputerId, name = settings.ComputerName, port, secret = _secret, cert = fingerprint });
+            var hosts = ServerHost.GetAdvertisedAddresses().Select(address => address.ToString()).ToArray();
+            var payload = JsonSerializer.Serialize(new { v = 1, id = settings.ComputerId, name = settings.ComputerName, port, secret = _secret, cert = fingerprint, hosts });
             return new PairingSession(payload, _expires);
         }
     }

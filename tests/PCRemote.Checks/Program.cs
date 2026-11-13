@@ -35,6 +35,11 @@ Directory.CreateDirectory(directory);
 var path = Path.Combine(directory, "settings.dat");
 var store = new SecureStore(path);
 void StorageCheck(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); }
+static bool IsPrivateIpv4(IPAddress ip)
+{
+    var bytes = ip.GetAddressBytes();
+    return bytes[0] == 10 || bytes[0] == 192 && bytes[1] == 168 || bytes[0] == 172 && bytes[1] is >= 16 and <= 31;
+}
 StorageCheck((await store.LoadAsync()).Devices.Count == 0, "Missing settings");
 var corruptPath = Path.Combine(directory, "corrupt.dat");
 var corruptStore = new SecureStore(corruptPath);
@@ -69,13 +74,21 @@ handler.ServerCertificateCustomValidationCallback = (_, certificate, _, _) => ce
     Convert.ToHexString(SHA256.HashData(certificate.RawData)).Equals(server.CertificateFingerprint, StringComparison.OrdinalIgnoreCase);
 using var client = new HttpClient(handler) { BaseAddress = new Uri($"https://127.0.0.1:{port}"), Timeout = TimeSpan.FromSeconds(10) };
 void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); }
-Check((await client.GetAsync("/api/v1/health")).IsSuccessStatusCode, "HTTPS health with certificate pin");
+var healthResponse = await client.GetAsync("/api/v1/health");
+Check(healthResponse.IsSuccessStatusCode, "HTTPS health with certificate pin");
+var healthJson = await healthResponse.Content.ReadAsStringAsync();
+Check(!healthJson.Contains("secret", StringComparison.OrdinalIgnoreCase) && !healthJson.Contains("token", StringComparison.OrdinalIgnoreCase), "Health response excludes pairing secrets");
 foreach (var route in new[] { "/api/v1/apps", "/api/v1/auth/check", "/api/v1/events" })
     Check((await client.GetAsync(route)).StatusCode == HttpStatusCode.Unauthorized, "Unauthorized GET " + route);
 foreach (var route in new[] { "/api/v1/commands/lock", "/api/v1/commands/shutdown", "/api/v1/apps/example/exit", "/api/v1/apps/terminate-all" })
     Check((await client.PostAsync(route, null)).StatusCode == HttpStatusCode.Unauthorized, "Unauthorized POST " + route);
 var session = pairing.CreateSession(port, server.CertificateFingerprint);
-var secret = JsonDocument.Parse(session.Payload).RootElement.GetProperty("secret").GetString()!;
+var qr = JsonDocument.Parse(session.Payload).RootElement;
+var secret = qr.GetProperty("secret").GetString()!;
+var advertised = ((IEnumerable<IPAddress>)typeof(ServerHost).GetMethod("GetAdvertisedAddresses", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, null)!).Select(x => x.ToString()).Distinct().Order().ToArray();
+Check(qr.TryGetProperty("hosts", out var hosts) && hosts.ValueKind == JsonValueKind.Array &&
+    hosts.EnumerateArray().All(x => x.GetString() is { } host && IPAddress.TryParse(host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork && IsPrivateIpv4(ip)) &&
+    hosts.EnumerateArray().Select(x => x.GetString()!).Distinct().Order().SequenceEqual(advertised), "QR advertises distinct private IPv4 literals");
 var response = await client.PostAsJsonAsync("/api/v1/pair", new PairRequest(secret, "Тестовый телефон"));
 Check(response.IsSuccessStatusCode, "Pairing");
 var credentials = (await response.Content.ReadFromJsonAsync<PairResponse>())!;

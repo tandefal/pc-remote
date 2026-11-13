@@ -12,6 +12,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -22,13 +24,12 @@ enum class Page { HOME, SYSTEM, APPS, COMPUTERS, CONNECT, SETTINGS }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = (application as PCRemoteApplication).preferences
-    private val api = ApiClient()
+    private val api = ApiClient(application)
     private val initialRead = runCatching { prefs.loadAll() to prefs.load() }
     private val initialComputers = initialRead.getOrNull()?.first.orEmpty()
     private val initialCredentials = initialRead.getOrNull()?.second
     private val _state = MutableStateFlow(UiState(connecting = initialCredentials != null, credentials = initialCredentials, computers = initialComputers, error = initialRead.exceptionOrNull()?.message, page = if (initialCredentials == null) Page.CONNECT else Page.HOME))
     val state = _state.asStateFlow()
-    private var pendingPayload: PairingPayload? = null
     private val discovered = mutableMapOf<String, DiscoveredComputer>()
     private var monitor: Job? = null
     private var pairingTimeout: Job? = null
@@ -56,16 +57,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startMonitor()
     }
     fun acceptQr(raw: String) {
+        if (_state.value.loading || _state.value.pairing) return
         try {
             val j = JSONObject(raw)
             require(j.getInt("v") == 1)
             val payload = PairingPayload(j.getString("id"), j.getString("name"), j.getInt("port"), j.getString("secret"), j.getString("cert"))
             require(payload.id.matches(Regex("[a-fA-F0-9]{32}")) && payload.certificateSha256.matches(Regex("[a-fA-F0-9]{64}")) && payload.port in 1..65535 && payload.secret.length in 32..128)
-            pendingPayload = payload
+            val addresses = j.optJSONArray("hosts")
+            require(addresses == null || addresses.length() <= 16)
+            val hosts = (0 until (addresses?.length() ?: 0)).map { addresses!!.getString(it) }.distinct()
+            require(hosts.all { host ->
+                val parts = host.split('.').map { it.toIntOrNull() ?: -1 }
+                parts.size == 4 && parts.all { it in 0..255 } &&
+                    (parts[0] == 10 || parts[0] == 172 && parts[1] in 16..31 || parts[0] == 192 && parts[1] == 168)
+            })
             _state.value = _state.value.copy(pairing = true, error = null)
             pairingTimeout?.cancel()
-            pairingTimeout = viewModelScope.launch { delay(20_000); if (pendingPayload != null) { pendingPayload = null; error("Компьютер не найден. Проверьте общую сеть, Firewall и доступность mDNS, затем отсканируйте новый код.") } }
-            discovery.start(); discovered[payload.id]?.let(::computerFound)
+            discovery.start()
+            pairingTimeout = viewModelScope.launch {
+                runTask {
+                    val found = withTimeoutOrNull(20_000) {
+                        val tried = mutableSetOf<String>()
+                        var reachable: DiscoveredComputer? = null
+                        while (reachable == null) {
+                            val candidates = hosts.map { DiscoveredComputer(payload.id, payload.name, it, payload.port, payload.certificateSha256) } +
+                                listOfNotNull(discovered[payload.id]?.takeIf { it.certificateSha256.equals(payload.certificateSha256, true) })
+                            for (candidate in candidates) {
+                                if (!tried.add("${candidate.host}:${candidate.port}")) continue
+                                val ok = withContext(Dispatchers.IO) { try { api.probe(candidate); true } catch (_: Exception) { false } }
+                                coroutineContext.ensureActive()
+                                if (ok) { reachable = candidate; break }
+                            }
+                            if (reachable == null) { delay(1000); tried.clear() }
+                        }
+                        reachable
+                    } ?: throw IOException("Компьютер не найден")
+                    val credentials = withContext(Dispatchers.IO) { api.pair(found, payload.secret, Build.MODEL) }
+                    prefs.save(credentials)
+                    _state.value = _state.value.copy(credentials = credentials, computers = prefs.loadAll(), pairing = false, page = Page.HOME, online = false)
+                }
+                startMonitor()
+            }
         }
         catch (_: Exception) { error("Это не QR-код PC Remote.") }
     }
@@ -82,9 +114,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         discovered[found.id] = found
         val current = _state.value.credentials
         if (current?.id == found.id && (current.host != found.host || current.port != found.port)) { val updated = current.copy(host = found.host, port = found.port); prefs.save(updated); _state.value = _state.value.copy(credentials = updated, computers = prefs.loadAll()); startMonitor() }
-        val pending = pendingPayload ?: return
-        if (pending.id != found.id || !pending.certificateSha256.equals(found.certificateSha256, true)) return
-        pendingPayload = null; pairingTimeout?.cancel(); viewModelScope.launch { runTask { val credentials = withContext(Dispatchers.IO) { api.pair(found, pending.secret, Build.MODEL) }; prefs.save(credentials); _state.value = _state.value.copy(credentials = credentials, computers = prefs.loadAll(), pairing = false, page = Page.HOME, online = false) }; startMonitor() }
     }
     private fun startMonitor() {
         monitor?.cancel()
@@ -156,7 +185,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         try { block() }
         catch (e: CancellationException) { throw e }
         catch (e: ApiException) { if (e.status == 401) _state.value.credentials?.let(::forgetRevoked) ?: error("Авторизация отклонена.") else error(e.message) }
-        catch (_: IOException) { error("Не удалось установить соединение с компьютером. Проверьте, что телефон и ПК подключены к одной домашней сети (ПК может быть подключён кабелем), PC Remote запущен, а брандмауэр Windows разрешает частную сеть.") }
+        catch (_: IOException) { error("Не удалось установить соединение с компьютером. Проверьте общую домашнюю сеть, запуск PC Remote и брандмауэр Windows. Если включён VPN, разрешите доступ к локальной сети; блокировка соединений вне VPN может мешать подключению.") }
         catch (e: Exception) { error(e.message ?: "Не удалось выполнить операцию.") }
         finally { _state.value = _state.value.copy(loading = false, pairing = false) }
     }
