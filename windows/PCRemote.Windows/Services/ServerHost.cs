@@ -70,7 +70,7 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
 
         _app.Use(async (context, next) =>
         {
-            if (!IsLocalAddress(context.Connection.RemoteIpAddress) || !IsTrustedInterface(context.Connection.LocalIpAddress)) { await WriteError(context, 403, "local_network_required", "Доступ разрешён только из локальной сети."); return; }
+            if (!IsAllowedNetwork(context.Connection.LocalIpAddress, context.Connection.RemoteIpAddress)) { await WriteError(context, 403, "local_network_required", "Доступ разрешён только из локальной или выбранной сети."); return; }
             try { await next(); }
             catch (BadHttpRequestException ex) { if (!context.Response.HasStarted) await WriteError(context, ex.StatusCode, "invalid_request", "Некорректный или слишком большой запрос."); }
             catch (Exception ex) { context.RequestServices.GetRequiredService<ILogger<ServerHost>>().LogError(ex, "Unhandled request failure"); if (!context.Response.HasStarted) await WriteError(context, 500, "internal_error", "Внутренняя ошибка сервера."); }
@@ -146,13 +146,29 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
     }
     internal static IEnumerable<IPAddress> GetAdvertisedAddresses()
     {
+        return GetPairingInterfaces()
+            .Where(adapter => adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
+            .Where(adapter => adapter.GetIPProperties().GatewayAddresses.Any(gateway => gateway.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.Any.Equals(gateway.Address)))
+            .SelectMany(GetInterfaceAddresses).Where(IsPrivateIPv4).Distinct().ToArray();
+    }
+    internal static NetworkInterface[] GetPairingInterfaces()
+    {
         return NetworkInterface.GetAllNetworkInterfaces()
-            .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up && adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
-            .Select(adapter => adapter.GetIPProperties())
-            .Where(properties => properties.GatewayAddresses.Any(gateway => gateway.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.Any.Equals(gateway.Address)))
-            .SelectMany(properties => properties.UnicastAddresses)
+            .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up && adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .Where(adapter => GetInterfaceAddresses(adapter).Any())
+            .OrderByDescending(adapter => GetInterfaceAddresses(adapter).Any(IsPrivateIPv4)).ToArray();
+    }
+    internal static IPAddress[] GetPairingAddresses(string interfaceId)
+    {
+        var adapter = GetPairingInterfaces().SingleOrDefault(adapter => adapter.Id == interfaceId)
+            ?? throw new InvalidOperationException("Выбранный интерфейс недоступен. Закройте окно сопряжения и повторите попытку.");
+        return GetInterfaceAddresses(adapter).Distinct().ToArray();
+    }
+    private static IEnumerable<IPAddress> GetInterfaceAddresses(NetworkInterface adapter)
+    {
+        return adapter.GetIPProperties().UnicastAddresses
             .Select(address => address.Address)
-            .Where(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && IsPrivateIPv4(address))
+            .Where(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && address.GetAddressBytes()[0] is > 0 and < 224 && !IPAddress.IsLoopback(address))
             .Distinct()
             .ToArray();
     }
@@ -187,15 +203,22 @@ public sealed class ServerHost(SecureStore store, AppSettings settings, PairingS
         return ToResult(result);
     }
     private static IResult ToResult(CommandResult r) => r.Success ? Results.Ok(r) : Results.Json(r, statusCode: 409);
-    private static bool IsTrustedInterface(IPAddress? local)
+    private bool IsAllowedNetwork(IPAddress? local, IPAddress? remote)
     {
-        if (local is null) return false;
+        if (local is null || remote is null) return false;
         if (local.IsIPv4MappedToIPv6) local = local.MapToIPv4();
-        if (IPAddress.IsLoopback(local)) return true;
-        return NetworkInterface.GetAllNetworkInterfaces().Any(adapter =>
-            adapter.OperationalStatus == OperationalStatus.Up &&
-            adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211 &&
-            adapter.GetIPProperties().UnicastAddresses.Any(address => address.Address.Equals(local)));
+        if (remote.IsIPv4MappedToIPv6) remote = remote.MapToIPv4();
+        if (IPAddress.IsLoopback(local)) return IPAddress.IsLoopback(remote);
+        return GetPairingInterfaces().Any(adapter => adapter.GetIPProperties().UnicastAddresses.Any(address =>
+            address.Address.Equals(local) &&
+            ((IsLocalAddress(local) && IsLocalAddress(remote)) ||
+             (address.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && pairing.IsInterfaceAllowed(adapter.Id) && IsSameIPv4Subnet(local, remote, address.IPv4Mask)))));
+    }
+    private static bool IsSameIPv4Subnet(IPAddress local, IPAddress remote, IPAddress mask)
+    {
+        var a = local.GetAddressBytes(); var b = remote.GetAddressBytes(); var m = mask.GetAddressBytes();
+        if (a.Length != 4 || b.Length != 4 || m.Length != 4 || m[0] != 255 || b[0] is 0 or >= 224 || IPAddress.IsLoopback(remote)) return false;
+        return Enumerable.Range(0, 4).All(i => (a[i] & m[i]) == (b[i] & m[i]));
     }
     private static bool IsLocalAddress(IPAddress? ip)
     {

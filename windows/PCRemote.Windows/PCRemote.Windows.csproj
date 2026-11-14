@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PCRemote</AssemblyName>
     <RootNamespace>PCRemote.Windows</RootNamespace>
-    <Version>1.0.10</Version>
+    <Version>1.0.12</Version>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

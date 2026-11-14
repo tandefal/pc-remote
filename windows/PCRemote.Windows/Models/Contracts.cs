@@ -6,6 +6,7 @@ public sealed class AppSettings
     public string ComputerName { get; set; } = Environment.MachineName;
     public int Port { get; set; } = 49821;
     public List<TrustedDevice> Devices { get; set; } = [];
+    public List<string> PairedInterfaceIds { get; set; } = [];
     public string? CertificatePfx { get; set; }
     public string? CertificatePassword { get; set; }
 }

@@ -26,7 +26,7 @@ public sealed class SecureStore
             catch (DirectoryNotFoundException) { return new AppSettings(); }
             var json = ProtectedData.Unprotect(encrypted, Entropy, DataProtectionScope.CurrentUser);
             var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? throw new JsonException("Пустое хранилище настроек.");
-            if (settings.Devices is null || string.IsNullOrWhiteSpace(settings.ComputerId) || settings.Port is < 1 or > 65535 ||
+            if (settings.Devices is null || settings.PairedInterfaceIds is null || settings.PairedInterfaceIds.Any(string.IsNullOrWhiteSpace) || string.IsNullOrWhiteSpace(settings.ComputerId) || settings.Port is < 1 or > 65535 ||
                 settings.Devices.Any(device => device is null || device.TokenHash is null || device.TokenHash.Length != 64 || !device.TokenHash.All(Uri.IsHexDigit)))
                 throw new JsonException("Некорректные настройки.");
             return settings;

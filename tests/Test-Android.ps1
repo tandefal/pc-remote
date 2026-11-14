@@ -1,6 +1,7 @@
 param(
     [string]$SdkPath = 'C:\Users\timti\AppData\Local\Android\Sdk',
     [string]$Device = 'emulator-5554',
+    [string]$HostAddress = '10.0.2.2',
     [string]$JdkPath = 'C:\Program Files\Java\jdk-17'
 )
 $ErrorActionPreference = 'Stop'
@@ -29,14 +30,14 @@ try {
     try {
         $sessionPath = Join-Path $artifactsPath 'checks-session.json'
         $ready = $false
-        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        for ($attempt = 0; $attempt -lt 240; $attempt++) {
             if ($testProcess.HasExited) { throw 'Integration server failed; see artifacts/integration-error.log.' }
             if ((Test-Path -LiteralPath $sessionPath) -and (Get-Item -LiteralPath $sessionPath).LastWriteTimeUtc -ge $startedAt) { $ready = $true; break }
             Start-Sleep -Milliseconds 500
         }
         if (!$ready) { throw 'Integration server did not become ready.' }
         $session = Get-Content -Raw -LiteralPath $sessionPath | ConvertFrom-Json
-        $output = & $adbExe -s $Device shell am instrument -w -r -e id $session.id -e port $session.port -e cert $session.cert -e secret $session.secret dev.pcremote.app.test/androidx.test.runner.AndroidJUnitRunner
+        $output = & $adbExe -s $Device shell am instrument -w -r -e id $session.id -e host $HostAddress -e port $session.port -e cert $session.cert -e secret $session.secret dev.pcremote.app.test/androidx.test.runner.AndroidJUnitRunner
         $output
         if (($output -join "`n") -notmatch 'OK \(1 test\)') { throw 'Android integration test failed.' }
     } finally {

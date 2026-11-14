@@ -71,11 +71,41 @@ public partial class MainWindow : Window
 
     private void CreatePairing(object s, RoutedEventArgs e)
     {
-        var session = _pairing.CreateSession(_server.Port, _server.CertificateFingerprint);
+        _pairing.CancelSession();
+        PairingCard.Visibility = Visibility.Collapsed;
+        PairingInterfaceBox.ItemsSource = ServerHost.GetPairingInterfaces();
+        PairingCard.Visibility = Visibility.Visible;
+        if (PairingInterfaceBox.Items.Count > 0) PairingInterfaceBox.SelectedIndex = 0;
+        else UpdatePairingCode();
+    }
+
+    private void PairingInterfaceChanged(object s, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (PairingCard.Visibility == Visibility.Visible) UpdatePairingCode();
+    }
+
+    private void UpdatePairingCode()
+    {
+        _pairing.CancelSession();
+        QrImage.Source = null; PairingExpiryText.Text = ""; PairingErrorText.Text = "";
+        if (PairingInterfaceBox.SelectedValue is not string interfaceId)
+        {
+            PairingErrorText.Text = "Нет доступного сетевого интерфейса для сопряжения.";
+            return;
+        }
+        try
+        {
+        var session = _pairing.CreateSession(_server.Port, _server.CertificateFingerprint, interfaceId);
         using var data = QRCodeGenerator.GenerateQrCode(session.Payload, QRCodeGenerator.ECCLevel.Q);
         var bytes = new PngByteQRCode(data).GetGraphic(8);
         var image = new BitmapImage(); image.BeginInit(); image.StreamSource = new MemoryStream(bytes); image.CacheOption = BitmapCacheOption.OnLoad; image.EndInit();
         QrImage.Source = image; PairingExpiryText.Text = $"Код действует до {session.ExpiresUtc.ToLocalTime():T}"; PairingCard.Visibility = Visibility.Visible;
+        }
+        catch (Exception)
+        {
+            _pairing.CancelSession();
+            PairingErrorText.Text = "Не удалось создать код. Проверьте подключение выбранного интерфейса и повторите попытку.";
+        }
     }
 
     private void ClosePairing(object s, RoutedEventArgs e) { _pairing.CancelSession(); PairingCard.Visibility = Visibility.Collapsed; RefreshDevices(); }

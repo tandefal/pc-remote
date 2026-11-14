@@ -31,8 +31,8 @@ class SecurePreferences(context: Context) {
         prefs.edit().putString("data", Base64.encodeToString(cipher.iv + cipher.doFinal(plain), Base64.NO_WRAP)).commit().also { check(it) { "Не удалось сохранить настройки." } }
     }
 
-    private fun JSONObject.toCredentials() = ComputerCredentials(getString("id"), getString("name"), getString("host"), getInt("port"), getString("token"), getString("cert"))
-    private fun ComputerCredentials.toJson() = JSONObject().put("id", id).put("name", name).put("host", host).put("port", port).put("token", token).put("cert", certificateSha256)
+    private fun JSONObject.toCredentials() = ComputerCredentials(getString("id"), getString("name"), getString("host"), getInt("port"), getString("token"), getString("cert"), optBoolean("fixedAddress", false))
+    private fun ComputerCredentials.toJson() = JSONObject().put("id", id).put("name", name).put("host", host).put("port", port).put("token", token).put("cert", certificateSha256).put("fixedAddress", fixedAddress)
 
     private fun read(): Pair<List<ComputerCredentials>, String?> {
         try {

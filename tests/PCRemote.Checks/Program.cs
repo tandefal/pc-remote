@@ -57,14 +57,41 @@ var concurrentSettings = new AppSettings();
 concurrentSettings.Devices.Add(new TrustedDevice { Id = "legacy", Name = "Телефон", TokenHash = SecureStore.HashToken("synthetic") });
 await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => store.SaveAsync(concurrentSettings)));
 StorageCheck((await store.LoadAsync()).Devices.Single().Id == "legacy", "Concurrent atomic saves preserve pairing");
+var migratedSettingsPath = Path.Combine(directory, "fixed-address-migration.dat");
+var migratedStore = new SecureStore(migratedSettingsPath);
+var migratedSettings = new AppSettings { PairedInterfaceIds = ["legacy-interface"] };
+await migratedStore.SaveAsync(migratedSettings);
+var reloadedMigration = await new SecureStore(migratedSettingsPath).LoadAsync();
+StorageCheck(reloadedMigration.PairedInterfaceIds.SequenceEqual(new[] { "legacy-interface" }), "Paired interface IDs survive settings reload");
 var addressCheck = typeof(ServerHost).GetMethod("IsLocalAddress", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-foreach (var (address, allowed) in new (string?, bool)[] { (null, false), ("127.0.0.1", true), ("192.168.1.2", true), ("10.2.3.4", true), ("172.31.0.2", true), ("172.32.0.1", false), ("8.8.8.8", false), ("::ffff:192.168.1.2", true), ("fe80::1", true), ("fd00::1", true), ("2001:4860:4860::8888", false) })
+foreach (var (address, allowed) in new (string?, bool)[] { (null, false), ("127.0.0.1", true), ("192.168.1.2", true), ("10.2.3.4", true), ("172.31.0.2", true), ("172.32.0.1", false), ("26.1.2.3", false), ("8.8.8.8", false), ("::ffff:192.168.1.2", true), ("fe80::1", true), ("fd00::1", true), ("2001:4860:4860::8888", false) })
     StorageCheck((bool)addressCheck.Invoke(null, new object?[] { address is null ? null : IPAddress.Parse(address) })! == allowed, "LAN address policy: " + (address ?? "missing"));
+var subnetCheck = typeof(ServerHost).GetMethod("IsSameIPv4Subnet", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+bool SameSubnet(string local, string remote, string mask) => (bool)subnetCheck.Invoke(null, new object[] { IPAddress.Parse(local), IPAddress.Parse(remote), IPAddress.Parse(mask) })!;
+StorageCheck(SameSubnet("26.1.2.3", "26.9.8.7", "255.0.0.0"), "Explicit IPv4 /8 subnet allowed");
+StorageCheck(!SameSubnet("26.1.2.3", "26.9.8.7", "0.0.0.0"), "IPv4 /0 subnet rejected");
+StorageCheck(!SameSubnet("26.1.2.3", "27.1.2.3", "255.0.0.0"), "Cross-subnet peer rejected");
 if (args.Contains("--storage-only")) return;
 var listener = new TcpListener(IPAddress.Loopback, 0);
 listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
 var settings = new AppSettings { Port = port, ComputerName = "Проверка PC Remote" };
 var pairing = new PairingService(store, settings);
+var usableInterfaces = (System.Net.NetworkInformation.NetworkInterface[])typeof(ServerHost).GetMethod("GetPairingInterfaces", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, null)!;
+if (usableInterfaces.Length > 0)
+{
+    var interfaceSettings = new AppSettings { Port = port };
+    var interfaceStore = new SecureStore(Path.Combine(directory, "interface-pairing.dat"));
+    var interfacePairing = new PairingService(interfaceStore, interfaceSettings);
+    var interfaceId = usableInterfaces[0].Id;
+    interfacePairing.CreateSession(port, "synthetic-fingerprint", interfaceId);
+    Check(interfacePairing.IsInterfaceAllowed(interfaceId), "Selected pending interface is allowed");
+    interfacePairing.CancelSession();
+    Check(!interfacePairing.IsInterfaceAllowed(interfaceId), "Cancelled pending interface is not allowed");
+    var pending = JsonDocument.Parse(interfacePairing.CreateSession(port, "synthetic-fingerprint", interfaceId).Payload).RootElement;
+    var persisted = await interfacePairing.PairAsync(new PairRequest(pending.GetProperty("secret").GetString()!, "Test interface"), "synthetic-fingerprint");
+    Check(persisted is not null && interfacePairing.IsInterfaceAllowed(interfaceId), "Paired interface remains allowed");
+    Check((await new SecureStore(Path.Combine(directory, "interface-pairing.dat")).LoadAsync()).PairedInterfaceIds.Contains(interfaceId), "Paired interface persisted after reload");
+}
 var apps = new WindowsAppService();
 var commands = new CommandService(apps);
 await using var server = new ServerHost(store, settings, pairing, apps, commands);
@@ -82,10 +109,23 @@ foreach (var route in new[] { "/api/v1/apps", "/api/v1/auth/check", "/api/v1/eve
     Check((await client.GetAsync(route)).StatusCode == HttpStatusCode.Unauthorized, "Unauthorized GET " + route);
 foreach (var route in new[] { "/api/v1/commands/lock", "/api/v1/commands/shutdown", "/api/v1/apps/example/exit", "/api/v1/apps/terminate-all" })
     Check((await client.PostAsync(route, null)).StatusCode == HttpStatusCode.Unauthorized, "Unauthorized POST " + route);
+var advertised = ((IEnumerable<IPAddress>)typeof(ServerHost).GetMethod("GetAdvertisedAddresses", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, null)!).Select(x => x.ToString()).Distinct().Order().ToArray();
+var pairingInterfacesMethod = typeof(ServerHost).GetMethod("GetPairingInterfaces", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+var pairingAddressesMethod = typeof(ServerHost).GetMethod("GetPairingAddresses", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+var interfaces = (System.Net.NetworkInformation.NetworkInterface[])pairingInterfacesMethod.Invoke(null, null)!;
+if (interfaces.Length > 0)
+{
+    var selected = interfaces[0];
+    var selectedSession = JsonDocument.Parse(pairing.CreateSession(port, server.CertificateFingerprint, selected.Id).Payload).RootElement;
+    var selectedHosts = selectedSession.GetProperty("hosts").EnumerateArray().Select(x => x.GetString()!).Order().ToArray();
+    var selectedAddresses = ((IPAddress[])pairingAddressesMethod.Invoke(null, new object[] { selected.Id })!).Select(x => x.ToString()).Order().ToArray();
+    Check(selectedHosts.SequenceEqual(selectedAddresses), "Selected-interface QR advertises only its private IPv4 addresses");
+}
+try { pairing.CreateSession(port, server.CertificateFingerprint, "invalid-interface-id"); throw new Exception("Invalid interface accepted"); }
+catch (InvalidOperationException) { Check(true, "Invalid pairing interface rejected"); }
 var session = pairing.CreateSession(port, server.CertificateFingerprint);
 var qr = JsonDocument.Parse(session.Payload).RootElement;
 var secret = qr.GetProperty("secret").GetString()!;
-var advertised = ((IEnumerable<IPAddress>)typeof(ServerHost).GetMethod("GetAdvertisedAddresses", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, null)!).Select(x => x.ToString()).Distinct().Order().ToArray();
 Check(qr.TryGetProperty("hosts", out var hosts) && hosts.ValueKind == JsonValueKind.Array &&
     hosts.EnumerateArray().All(x => x.GetString() is { } host && IPAddress.TryParse(host, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork && IsPrivateIpv4(ip)) &&
     hosts.EnumerateArray().Select(x => x.GetString()!).Distinct().Order().SequenceEqual(advertised), "QR advertises distinct private IPv4 literals");

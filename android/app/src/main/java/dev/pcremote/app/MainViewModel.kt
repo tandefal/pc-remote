@@ -68,31 +68,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val hosts = (0 until (addresses?.length() ?: 0)).map { addresses!!.getString(it) }.distinct()
             require(hosts.all { host ->
                 val parts = host.split('.').map { it.toIntOrNull() ?: -1 }
-                parts.size == 4 && parts.all { it in 0..255 } &&
-                    (parts[0] == 10 || parts[0] == 172 && parts[1] in 16..31 || parts[0] == 192 && parts[1] == 168)
+                parts.size == 4 && parts.all { it in 0..255 } && host == parts.joinToString(".") &&
+                    parts[0] in 1..223 && parts[0] != 127
             })
             _state.value = _state.value.copy(pairing = true, error = null)
             pairingTimeout?.cancel()
             discovery.start()
             pairingTimeout = viewModelScope.launch {
                 runTask {
+                    var lastFailure: LocalConnectionException? = null
                     val found = withTimeoutOrNull(20_000) {
                         val tried = mutableSetOf<String>()
                         var reachable: DiscoveredComputer? = null
                         while (reachable == null) {
-                            val candidates = hosts.map { DiscoveredComputer(payload.id, payload.name, it, payload.port, payload.certificateSha256) } +
-                                listOfNotNull(discovered[payload.id]?.takeIf { it.certificateSha256.equals(payload.certificateSha256, true) })
+                            val candidates = if (hosts.isNotEmpty()) hosts.map { DiscoveredComputer(payload.id, payload.name, it, payload.port, payload.certificateSha256) }
+                                else listOfNotNull(discovered[payload.id]?.takeIf { it.certificateSha256.equals(payload.certificateSha256, true) })
                             for (candidate in candidates) {
                                 if (!tried.add("${candidate.host}:${candidate.port}")) continue
-                                val ok = withContext(Dispatchers.IO) { try { api.probe(candidate); true } catch (_: Exception) { false } }
+                                val ok = withContext(Dispatchers.IO) {
+                                    try { api.probe(candidate); true }
+                                    catch (e: LocalConnectionException) { lastFailure = e; false }
+                                }
                                 coroutineContext.ensureActive()
                                 if (ok) { reachable = candidate; break }
                             }
                             if (reachable == null) { delay(1000); tried.clear() }
                         }
                         reachable
-                    } ?: throw IOException("Компьютер не найден")
-                    val credentials = withContext(Dispatchers.IO) { api.pair(found, payload.secret, Build.MODEL) }
+                    } ?: throw (lastFailure ?: LocalConnectionException(if (hosts.isEmpty()) "Адрес ПК не найден. Создайте новый QR-код на компьютере и повторите сканирование." else "Истекло время проверки маршрутов к ПК. Создайте новый QR-код и повторите попытку."))
+                    val credentials = withContext(Dispatchers.IO) { api.pair(found, payload.secret, Build.MODEL) }.copy(fixedAddress = hosts.isNotEmpty())
                     prefs.save(credentials)
                     _state.value = _state.value.copy(credentials = credentials, computers = prefs.loadAll(), pairing = false, page = Page.HOME, online = false)
                 }
@@ -113,7 +117,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleComputerFound(found: DiscoveredComputer) {
         discovered[found.id] = found
         val current = _state.value.credentials
-        if (current?.id == found.id && (current.host != found.host || current.port != found.port)) { val updated = current.copy(host = found.host, port = found.port); prefs.save(updated); _state.value = _state.value.copy(credentials = updated, computers = prefs.loadAll()); startMonitor() }
+        if (current?.id == found.id && !current.fixedAddress && (current.host != found.host || current.port != found.port)) { val updated = current.copy(host = found.host, port = found.port); prefs.save(updated); _state.value = _state.value.copy(credentials = updated, computers = prefs.loadAll()); startMonitor() }
     }
     private fun startMonitor() {
         monitor?.cancel()
@@ -121,6 +125,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = _state.value.copy(online = false, connecting = _state.value.credentials != null, locked = null, apps = emptyList(), monitoring = null, history = emptyList())
         monitor = viewModelScope.launch {
             var retry = 1000L
+            var connectionError: String? = null
             while (isActive) {
                 val c = _state.value.credentials
                 if (c == null) { delay(1000); continue }
@@ -137,12 +142,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val now = android.os.SystemClock.elapsedRealtime()
                             lastMetricsAt = now
                             val history = if (metrics == null) emptyList() else (_state.value.history.filter { now - it.time <= 60_000 } + MonitoringPoint(now, metrics)).takeLast(61)
-                            _state.value = _state.value.copy(monitoring = metrics, history = history, online = true, connecting = false, locked = if (data.isNull("locked")) null else data.getBoolean("locked"), apps = list)
+                            _state.value = _state.value.copy(monitoring = metrics, history = history, online = true, connecting = false, error = _state.value.error.takeUnless { it == connectionError }, locked = if (data.isNull("locked")) null else data.getBoolean("locked"), apps = list)
+                            connectionError = null
                             retry = 1000L
                         }
                     }
                 } catch (e: CancellationException) { throw e }
                 catch (e: ApiException) { if (e.status == 401 && _state.value.credentials == c) forgetRevoked(c) }
+                catch (e: LocalConnectionException) { if (_state.value.credentials == c) { connectionError = e.message; _state.value = _state.value.copy(error = connectionError) } }
                 catch (_: Exception) { }
                 if (_state.value.credentials == c) _state.value = _state.value.copy(online = false, connecting = false, locked = null, apps = emptyList(), monitoring = null, history = emptyList())
                 delay(retry)
@@ -185,6 +192,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         try { block() }
         catch (e: CancellationException) { throw e }
         catch (e: ApiException) { if (e.status == 401) _state.value.credentials?.let(::forgetRevoked) ?: error("Авторизация отклонена.") else error(e.message) }
+        catch (e: LocalConnectionException) { error(e.message ?: "Локальное соединение недоступно.") }
         catch (_: IOException) { error("Не удалось установить соединение с компьютером. Проверьте общую домашнюю сеть, запуск PC Remote и брандмауэр Windows. Если включён VPN, разрешите доступ к локальной сети; блокировка соединений вне VPN может мешать подключению.") }
         catch (e: Exception) { error(e.message ?: "Не удалось выполнить операцию.") }
         finally { _state.value = _state.value.copy(loading = false, pairing = false) }
